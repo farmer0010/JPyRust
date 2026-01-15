@@ -1,0 +1,4 @@
+# JPyRust Python Dependencies
+# Add your packages here (e.g., numpy, torch)
+# These will be automatically installed into the embedded runtime during build.
+requests==2.31.0
