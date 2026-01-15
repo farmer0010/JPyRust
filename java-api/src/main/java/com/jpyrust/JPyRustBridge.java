@@ -11,44 +11,47 @@ public class JPyRustBridge {
 
     public native String runPythonAI(String input, int number);
 
-    // 2. 메인 함수 (테스트 & 실행 진입점)
-    public static void main(String[] args) {
+    // 2. 초기화 상태 플래그
+    private static boolean isInitialized = false;
+
+    /**
+     * 외부에서 호출 가능한 초기화 메서드 (Zero-Config)
+     * Spring Boot 등 서버 시작 시 호출 권장
+     */
+    public synchronized static void init() {
+        if (isInitialized) {
+            System.out.println("[JPyRust] Already initialized.");
+            return;
+        }
+
         try {
-            System.out.println("=== JPyRust Zero-Config Start ===");
+            System.out.println("=== JPyRust Zero-Config Initialization ===");
 
             // [Step 1] Python Runtime 추출 (from resources/python_dist.zip)
             System.out.println("[Init] Extracting Python Runtime...");
             java.nio.file.Path pythonHome = NativeLoader.extractZip("/python_dist.zip", "jpyrust_python_");
             System.out.println("[Init] Python extracted to: " + pythonHome.toAbsolutePath());
 
-            // [Debug] 파일 목록 및 존재 여부 확인 -> 파일로 작성
+            // [Debug] 파일 목록 및 존재 여부 확인 -> 파일로 작성 (Optional)
             File debugFile = new File("debug_listing.txt");
             try (PrintWriter pw = new PrintWriter(debugFile)) {
                 pw.println("Extracted Path: " + pythonHome.toAbsolutePath());
                 File[] files = pythonHome.toFile().listFiles();
                 if (files != null) {
                     pw.println("Files count: " + files.length);
-                    for (File f : files) {
-                        pw.println(" - " + f.getName());
-                    }
-                } else {
-                    pw.println("Directory is empty or IO Error.");
                 }
                 pw.println("ai_worker.py exists? " + pythonHome.resolve("ai_worker.py").toFile().exists());
                 pw.println("python3.dll exists? " + pythonHome.resolve("python3.dll").toFile().exists());
             } catch (Exception e) {
-                System.err.println("Failed to write debug file: " + e);
+                // Ignore debug file write error
             }
 
             // [Step 2] Python DLL 미리 로드 (의존성 해결)
-            // Windows Embeddable Python에는 python3.dll, python310.dll 등이 있음.
-            // 이를 미리 로드해야 rust_bridge가 로드될 때 에러가 안 남.
             try {
                 // python3.dll은 종종 필수적인 redirection DLL임
                 System.load(pythonHome.resolve("python3.dll").toAbsolutePath().toString());
                 // 실제 버전별 DLL (예: python310.dll)
-                // 파일명을 정확히 모르니, 폴더 내의 python3*.dll을 찾아서 로드하면 더 좋음.
-                // 일단 하드코딩 (3.10.11 기준)
+                // 버전 바뀌면 수정 필요. 현재 3.10.11
                 System.load(pythonHome.resolve("python310.dll").toAbsolutePath().toString());
                 System.out.println("[Init] Python DLLs loaded successfully.");
             } catch (UnsatisfiedLinkError | Exception e) {
@@ -59,12 +62,29 @@ public class JPyRustBridge {
             System.out.println("[Init] Loading Rust Bridge...");
             NativeLoader.load("rust_bridge");
 
-            // [Step 4] Bridge 객체 생성 및 연결
+            // [Step 4] Rust 측 초기화 (PYTHONHOME 등 설정)
+            // 인스턴스를 하나 만들어서 호출 (native initPython은 인스턴스 메서드)
             JPyRustBridge bridge = new JPyRustBridge();
-
-            // Rust 측 초기화 (PYTHONHOME 등 설정)
             bridge.initPython(pythonHome.toAbsolutePath().toString());
             System.out.println("[Init] Rust Bridge Initialized.\n");
+
+            isInitialized = true;
+            System.out.println("=== Initialization Complete ===");
+
+        } catch (Exception e) {
+            System.err.println("\n[FATAL] Initialization failed.");
+            e.printStackTrace();
+            throw new RuntimeException("JPyRust initialization failed", e);
+        }
+    }
+
+    // 3. 메인 함수 (테스트 & 실행 진입점)
+    public static void main(String[] args) {
+        // 초기화 호출
+        init();
+
+        try {
+            JPyRustBridge bridge = new JPyRustBridge();
 
             // [Step 5] 동작 테스트
             System.out.println("Java: Rust hello() 호출...");
@@ -77,9 +97,7 @@ public class JPyRustBridge {
             System.out.println("\n=== Success ===");
 
         } catch (Exception e) {
-            System.err.println("\n[FATAL] Execution failed.");
             e.printStackTrace();
-            // System.exit(1);
         }
     }
 }
