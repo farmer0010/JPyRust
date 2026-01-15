@@ -5,11 +5,11 @@ public class JPyRustBridge {
     // 실제 로딩 로직은 나중에 NativeLoader로 대체될 예정임.
     static {
         try {
-            // 개발 편의를 위해 시스템 프로퍼티로 경로를 받거나,
-            // 현재는 System.loadLibrary("rust_bridge")를 호출하여 java.library.path에 의존.
-            System.loadLibrary("rust_bridge"); // 리눅스/맥: librust_bridge.so, 윈도우: rust_bridge.dll
-        } catch (UnsatisfiedLinkError e) {
+            // 1. Zero-Config: Load native library from resources (JAR/classpath)
+            NativeLoader.load("rust_bridge");
+        } catch (Exception e) {
             System.err.println("Native library load failed: " + e.getMessage());
+            e.printStackTrace();
             System.exit(1);
         }
     }
