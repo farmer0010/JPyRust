@@ -47,6 +47,14 @@ SpringBoot -->|"HTTP Response"| Client
 - **No ProcessBuilder**: Avoids slow process forking (ProcessBuilder) or HTTP overhead. It uses **JNI (Java Native Interface)** to share memory space.
 - **GIL Management**: Explicitly manages the Python GIL (Global Interpreter Lock) acquisition/release at the Rust level, ensuring deadlock-free concurrency even in multi-threaded environments like Spring Boot.
 
+### 4. ⚡ Zero-Copy Shared Memory
+- **Direct ByteBuffer**: Java's off-heap memory is directly shared with Rust and Python without copying. (Theoretical transfer speed tends to 0ms)
+- **In-Place Modification**: Python (`numpy`/`cv2`) directly modifies image data in Java memory. Completely eliminates serialization overhead for large AI model inference.
+
+### 5. 🛠️ Development Experience
+- **Dependency Automation**: Simply list packages in `requirements.txt`. The Gradle build automatically handles `pip install` and embeds them into the JAR.
+- **CI/CD Pipeline**: GitHub Actions automatically cross-builds and deploys native libraries for Windows, Linux, and macOS.
+
 ## 📂 Project Structure
 **Multi-Module Polyglot Project**
 Organically combines Java, Rust, Python, and Web code.
@@ -57,13 +65,14 @@ Organically combines Java, Rust, Python, and Web code.
 ├── docker-compose.yml          # [Infra] Docker Deployment Config
 ├── Dockerfile                  # [Infra] Multi-stage Build Script
 ├── settings.gradle.kts         # [Gradle] Multi-module Settings
+├── requirements.txt            # [Config] Python Dependencies
 ├── java-api                    # [Module] Java Library (Core)
 │   ├── src/main/java
 │   │   └── com/jpyrust
 │   │       ├── NativeLoader.java   # [Core] Auto-extractor for DLLs & Python Runtime
 │   │       └── JPyRustBridge.java  # [API] User-facing Native Interface
 │   └── src/main/resources
-│       └── natives             # [Res] Platform-specific Binaries (.dll, .so)
+│       └── python_dist         # [Res] Embedded Python Runtime (Zip on build)
 ├── rust-bridge                 # [Module] Rust JNI Implementation
 │   ├── Cargo.toml              # [Rust] Dependencies (jni, pyo3)
 │   └── src
@@ -71,7 +80,7 @@ Organically combines Java, Rust, Python, and Web code.
 ├── python-core                 # [Module] AI/ML Logic
 │   └── ai_worker.py            # [Code] Python script performing actual logic
 └── demo-web                    # [Module] Spring Boot Demo Server
-    └── src/main/java/.../AIController.java # Web API Endpoint
+    └── src/main/java/.../AIImageController.java # Zero-Copy API Endpoint
 ```
 
 ## 🔄 Logic Flow
@@ -96,22 +105,21 @@ Rust->>Py: Py_InitializeEx(0) (Signal Protection)
 Rust->>Py: Windows DLL Path Patch
 deactivate Rust
 deactivate Loader
-%% Execution Phase
-Note over Boot, Py: 2. Request Handling (Runtime)
-User->>Boot: GET /api/chat?msg="Hello"
+%% Execution Phase (Zero-Copy)
+Note over Boot, Py: 2. Zero-Copy Request (Image Processing)
+User->>Boot: POST /api/ai/process-image (Image)
 activate Boot
-Boot->>Rust: runPythonAI("Hello") (JNI Call)
+Boot->>Boot: DirectByteBuffer.allocate()
+Boot->>Rust: runPythonRaw(Buffer Pointer)
 activate Rust
-Note right of Rust: 🔒 Acquire GIL
-Rust->>Py: Add sys.path & import ai_worker
+Rust->>Py: PyMemoryView_FromMemory(Ptr)
 activate Py
-Py->>Py: process_data("Hello")
-Py-->>Rust: Return Result ("Processed by AI...")
+Py->>Py: numpy.frombuffer() -> In-Place Edit
+Py-->>Rust: Return
 deactivate Py
-Note right of Rust: 🔓 Release GIL
-Rust-->>Boot: Convert to JString & Return
+Rust-->>Boot: Return
 deactivate Rust
-Boot-->>User: JSON Response
+Boot-->>User: Processed Image (PNG)
 deactivate Boot
 ```
 
@@ -124,6 +132,8 @@ deactivate Boot
 | **v0.3** | Desert Mode | Embedded Standalone Python(3.10). Enabled offline execution without local Python installation. |
 | **v0.4** | Safety Patch | Patched SIGINT conflicts and fixed Windows DLL path issues. |
 | **v1.0** | Release | Integrated with Spring Boot and added Docker multi-stage build support. |
+| **v1.1** | Optimization | Implemented Zero-Copy Shared Memory & Image Processing Demo. |
+| **v1.2** | Automation | Gradle-based Python Dependency Automation & GitHub Actions CI/CD. |
 
 ---
 
@@ -148,7 +158,7 @@ cargo build --release
 cd ../demo-web
 ./gradlew bootRun
 ```
-  * Access: `http://localhost:8080/api/ai/chat?message=HelloJPyRust&id=1`
+  * Chat API: `http://localhost:8080/api/ai/chat?message=HelloJPyRust&id=1`
 
 ### 3. Run with Docker (Recommended)
 Use Docker to test in a clean environment without Python or Rust installed.
@@ -158,3 +168,12 @@ Use Docker to test in a clean environment without Python or Rust installed.
 docker build -t jpyrust-demo .
 docker run -p 8080:8080 jpyrust-demo
 ```
+
+### 4. Zero-Copy Image Processing Demo
+Experience the Zero-Copy performance directly in your web browser.
+
+1. Run Server: `./gradlew bootRun`
+2. Access: `http://localhost:8080`
+3. Features:
+   - Image upload and real-time grayscale/process
+   - **Zero-Copy Processing Time** visible in console logs
