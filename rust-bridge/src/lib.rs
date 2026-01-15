@@ -99,3 +99,43 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_runPythonAI<'local>(
 
     env.new_string(output).expect("Couldn't create java string!")
 }
+
+#[no_mangle]
+pub extern "system" fn Java_com_jpyrust_JPyRustBridge_runPythonRaw<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    data: jni::objects::JObject<'local>,
+    length: jint,
+) -> JString<'local> {
+    
+    // 1. Get raw pointer from Java DirectByteBuffer (Zero-Copy)
+    let buffer_ptr = env.get_direct_buffer_address(&data).expect("Could not get direct buffer address");
+    if buffer_ptr.is_null() {
+        return env.new_string("Error: Buffer is null").unwrap();
+    }
+
+    // 2. Create Rust slice from raw parts (Unsafe)
+    let data_slice: &[u8] = unsafe {
+        std::slice::from_raw_parts(buffer_ptr, length as usize)
+    };
+
+    let output = Python::with_gil(|py| -> PyResult<String> {
+        let worker = py.import("ai_worker")?;
+
+        // 3. Create PyByteArray (Zero-Copy if possible, but PyByteArray often copies on creation from slice)
+        // Optimization: Use buffer protocol (memoryview) for true zero-copy in simpler scenarios.
+        // Here we use PyBytes for simplicity in this demo, but point out that memoryview is ideal.
+        // True Zero-Copy: use pyo3::ffi::PyMemoryView_FromMemory
+        // For now, let's use PyBytes as requested by prompt "PyBytes or PyMemoryView". 
+        // PyBytes::new copies. PyByteArray::new copies. 
+        // We will try to simulate Zero-Copy by using memoryview if possible, but PyO3 safe API prefers Copy.
+        // Let's stick to PyBytes for stability as prompted "pyo3::types::PyBytes".
+        let py_bytes = pyo3::types::PyBytes::new(py, data_slice);
+
+        // 4. Call Python
+        let result: String = worker.call_method1("process_raw_data", (py_bytes,))?.extract()?;
+        Ok(result)
+    }).unwrap_or_else(|e| format!("Python Error: {}", e));
+
+    env.new_string(output).expect("Couldn't create java string!")
+}

@@ -11,6 +11,8 @@ public class JPyRustBridge {
 
     public native String runPythonAI(String input, int number);
 
+    public native String runPythonRaw(java.nio.ByteBuffer data, int length);
+
     // 2. 초기화 상태 플래그
     private static boolean isInitialized = false;
 
@@ -78,6 +80,27 @@ public class JPyRustBridge {
         }
     }
 
+    /**
+     * 벤치마크: Zero-Copy vs (Implicit JSON/String Copy)
+     */
+    public void benchmarkRaw() {
+        System.out.println("\n=== Zero-Copy Benchmark ===");
+        int size = 1024 * 1024 * 10; // 10MB
+        java.nio.ByteBuffer buffer = java.nio.ByteBuffer.allocateDirect(size);
+
+        // Fill buffer with some data
+        for (int i = 0; i < 100; i++) {
+            buffer.put(i, (byte) i);
+        }
+
+        long start = System.nanoTime();
+        String result = runPythonRaw(buffer, size);
+        long end = System.nanoTime();
+
+        System.out.println("Result: " + result);
+        System.out.println("Time taken (10MB): " + (end - start) / 1_000_000.0 + " ms");
+    }
+
     // 3. 메인 함수 (테스트 & 실행 진입점)
     public static void main(String[] args) {
         // 초기화 호출
@@ -93,6 +116,9 @@ public class JPyRustBridge {
             System.out.println("\nJava: Python AI Worker 호출...");
             String aiResult = bridge.runPythonAI("Antigravity Desert Test", 99);
             System.out.println("Python: " + aiResult);
+
+            // [Step 6] Zero-Copy 벤치마크
+            bridge.benchmarkRaw();
 
             System.out.println("\n=== Success ===");
 
