@@ -1,4 +1,4 @@
-Extracted Path: C:\Users\±Ë¡÷øµ\AppData\Local\Temp\jpyrust_python_6021834937055662522
+Extracted Path: C:\Users\±Ë¡÷øµ\AppData\Local\Temp\jpyrust_python_2724411132851756082
 Files count: 35
  - ai_worker.py
  - libcrypto-1_1.dll
