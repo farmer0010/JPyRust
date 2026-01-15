@@ -11,7 +11,7 @@ public class JPyRustBridge {
 
     public native String runPythonAI(String input, int number);
 
-    public native String runPythonRaw(java.nio.ByteBuffer data, int length);
+    public native String runPythonRaw(java.nio.ByteBuffer data, int length, int width, int height, int channels);
 
     // 2. 초기화 상태 플래그
     private static boolean isInitialized = false;
@@ -94,7 +94,7 @@ public class JPyRustBridge {
         }
 
         long start = System.nanoTime();
-        String result = runPythonRaw(buffer, size);
+        String result = runPythonRaw(buffer, size, 0, 0, 0);
         long end = System.nanoTime();
 
         System.out.println("Result: " + result);

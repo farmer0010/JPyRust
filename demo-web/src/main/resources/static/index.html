@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JPyRust Zero-Copy Demo</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; background: #f0f2f5; }
+        .container { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { color: #1a1a1a; margin-bottom: 20px; }
+        .controls { margin-bottom: 30px; display: flex; gap: 10px; align-items: center; }
+        button { background: #0066ff; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: 500; font-size: 16px; transition: background 0.2s; }
+        button:hover { background: #0052cc; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .image-box { border: 2px dashed #ddd; border-radius: 8px; min-height: 300px; display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; background: #fafafa; }
+        .image-box img { max-width: 100%; max-height: 400px; object-fit: contain; }
+        .p-title { font-weight: bold; margin-bottom: 10px; color: #555; }
+        #status { margin-top: 15px; font-weight: 500; color: #0066ff; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>⚡ JPyRust Zero-Copy Image Processor</h1>
+        <p>Demonstrates high-performance image processing using Shared Memory (Java ↔ Rust ↔ Python).</p>
+        
+        <div class="controls">
+            <input type="file" id="fileInput" accept="image/*">
+            <button onclick="processImage()" id="btnProcess">🚀 Process Image</button>
+        </div>
+
+        <div id="status">Ready</div>
+
+        <div class="grid">
+            <div>
+                <div class="p-title">Original (Host Memory)</div>
+                <div class="image-box">
+                    <img id="imgOriginal" src="" alt="Select an image" style="display:none">
+                </div>
+            </div>
+            <div>
+                <div class="p-title">Processed (Zero-Copy Result)</div>
+                <div class="image-box">
+                    <img id="imgResult" src="" alt="Result will appear here" style="display:none">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const imgOriginal = document.getElementById('imgOriginal');
+        const imgResult = document.getElementById('imgResult');
+        const status = document.getElementById('status');
+        const btn = document.getElementById('btnProcess');
+
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const url = URL.createObjectURL(file);
+                imgOriginal.src = url;
+                imgOriginal.style.display = 'block';
+                imgResult.style.display = 'none';
+                status.innerText = "Image selected. Click Process.";
+            }
+        });
+
+        async function processImage() {
+            if (!fileInput.files[0]) {
+                alert("Please select an image first.");
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+
+            btn.disabled = true;
+            status.innerText = "Processing via Python AI (Zero-Copy)...";
+            const startTime = performance.now();
+
+            try {
+                const response = await fetch('/api/ai/process-image', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) throw new Error("Processing failed");
+
+                const blob = await response.blob();
+                const url = URL.createObjectURL(blob);
+                const endTime = performance.now();
+
+                imgResult.src = url;
+                imgResult.style.display = 'block';
+                status.innerText = `✅ Success! Total Roundtrip: ${(endTime - startTime).toFixed(2)}ms`;
+
+            } catch (err) {
+                console.error(err);
+                status.innerText = "❌ Error: " + err.message;
+            } finally {
+                btn.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>

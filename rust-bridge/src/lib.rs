@@ -106,6 +106,9 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_runPythonRaw<'local>(
     _class: JClass<'local>,
     data: jni::objects::JObject<'local>,
     length: jint,
+    width: jint,
+    height: jint,
+    channels: jint,
 ) -> JString<'local> {
     
     // 1. Get raw pointer from Java DirectByteBuffer (Zero-Copy)
@@ -114,27 +117,33 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_runPythonRaw<'local>(
         return env.new_string("Error: Buffer is null").unwrap();
     }
 
-    // 2. Create Rust slice from raw parts (Unsafe)
-    let data_slice: &[u8] = unsafe {
-        std::slice::from_raw_parts(buffer_ptr, length as usize)
-    };
-
+    // 2. Determine Mode: Benchmark (Raw) or Image
     let output = Python::with_gil(|py| -> PyResult<String> {
         let worker = py.import("ai_worker")?;
 
-        // 3. Create PyByteArray (Zero-Copy if possible, but PyByteArray often copies on creation from slice)
-        // Optimization: Use buffer protocol (memoryview) for true zero-copy in simpler scenarios.
-        // Here we use PyBytes for simplicity in this demo, but point out that memoryview is ideal.
-        // True Zero-Copy: use pyo3::ffi::PyMemoryView_FromMemory
-        // For now, let's use PyBytes as requested by prompt "PyBytes or PyMemoryView". 
-        // PyBytes::new copies. PyByteArray::new copies. 
-        // We will try to simulate Zero-Copy by using memoryview if possible, but PyO3 safe API prefers Copy.
-        // Let's stick to PyBytes for stability as prompted "pyo3::types::PyBytes".
-        let py_bytes = pyo3::types::PyBytes::new(py, data_slice);
+        // 3. True Zero-Copy Write-Back using Low-Level FFI
+        // Create a writable memoryview directly from the raw pointer
+        let py_memoryview = unsafe {
+            // PyMemoryView_FromMemory returns a *mut PyObject (New Reference)
+            let view_ptr = pyo3::ffi::PyMemoryView_FromMemory(
+                buffer_ptr as *mut i8,
+                length as isize,
+                pyo3::ffi::PyBUF_WRITE // Read/Write Access
+            );
+            // Convert to PyObject to be managed by PyO3
+            PyObject::from_owned_ptr(py, view_ptr)
+        };
 
-        // 4. Call Python
-        let result: String = worker.call_method1("process_raw_data", (py_bytes,))?.extract()?;
-        Ok(result)
+        if width > 0 && height > 0 {
+            // Mode: Image Processing
+            let args = (py_memoryview, width, height, channels);
+            let result: String = worker.call_method1("process_image_raw", args)?.extract()?;
+            return Ok(result);
+        } else {
+            // Mode: Benchmark / Raw
+            let result: String = worker.call_method1("process_raw_data", (py_memoryview,))?.extract()?;
+            return Ok(result);
+        }
     }).unwrap_or_else(|e| format!("Python Error: {}", e));
 
     env.new_string(output).expect("Couldn't create java string!")
