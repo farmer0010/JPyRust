@@ -1,0 +1,27 @@
+# Rust
+target/
+**/*.rs.bk
+
+# Java / Gradle
+.gradle/
+build/
+out/
+.idea/
+*.iml
+*.class
+*.log
+.classpath
+.project
+.settings/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# OS / IDE
+Thumbs.db
+.DS_Store
+.vscode/
