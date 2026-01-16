@@ -61,10 +61,10 @@ jobs:
       shell: powershell
       run: |
         $path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
-        $newPath = ($path.Split(';') | Where-Object { $_ -notlike "*\Git\*" -and $_ -ne "" }) -join ";"
-        [Environment]::SetEnvironmentVariable("Path", $newPath, "Process")
-        echo "Cleaned PATH for Windows Build:"
-        echo $env:Path
+        $newPath = ($path.Split(';') | Where-Object { $_ -notlike "*\Git\usr\bin*" -and $_ -ne "" }) -join ";"
+        echo "PATH=$newPath" >> $env:GITHUB_ENV
+        echo "Cleaned PATH for Windows Build (Next Step Persistence):"
+        echo $newPath
 
     # Rust Setup
     - name: Set up Rust
@@ -77,7 +77,14 @@ jobs:
         echo "=== Environment Variables ==="
         env
         echo "=== File System (Recursive) ==="
+        echo "=== File System (Recursive) ==="
         ls -R
+        
+        # Windows Linker Check
+        if [ "${{ matrix.os }}" == "windows-latest" ]; then
+             echo "Checking which linker is active..."
+             where link || echo "link command not found"
+        fi
         
         # macOS Explicit JAVA_HOME injection check (User requirement)
         if [ "${{ matrix.os }}" == "macos-latest" ]; then
@@ -98,6 +105,10 @@ jobs:
         fi
         
         echo "Building in $(pwd)..."
+        # Windows: Explicitly specify linker if needed, though PATH cleaning should suffice.
+        if [ "${{ matrix.os }}" == "windows-latest" ]; then
+             export RUSTFLAGS="-C linker=link.exe"
+        fi
         cargo build --release
 
     - name: Upload Artifact (Windows)
