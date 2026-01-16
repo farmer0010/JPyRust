@@ -29,19 +29,65 @@ jobs:
         java-version: '17'
 
     - name: Set up Python
+      id: setup-python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.10' 
+        python-version: '3.10'
 
+    # 1. Common Environment Setup (Explicit Linking)
+    - name: Configure Common Environment
+      shell: bash
+      run: |
+        echo "JAVA_HOME=${{ steps.setup-java.outputs.path }}" >> $GITHUB_ENV
+        echo "PYO3_PYTHON=${{ steps.setup-python.outputs.python-path }}" >> $GITHUB_ENV
+
+    # 2. OS-Specific Handling
+    
+    # Linux: Install python3-dev
+    - name: Install Dependencies (Linux)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y python3-dev
+
+    # Windows: Setup MSVC
+    - name: Setup MSVC (Windows)
+      if: matrix.os == 'windows-latest'
+      uses: ilammy/msvc-dev-cmd@v1
+
+    # Rust Setup
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
 
+    # 3. Log Debugging & Build Prep
+    - name: Debug Environment
+      shell: bash
+      run: |
+        echo "=== Environment Variables ==="
+        env
+        echo "=== File System (Recursive) ==="
+        ls -R
+        
+        # macOS Explicit JAVA_HOME injection check (User requirement)
+        if [ "${{ matrix.os }}" == "macos-latest" ]; then
+            echo "Injecting MacOS specific JAVA_HOME..."
+            export JAVA_HOME=$(/usr/libexec/java_home)
+            echo "JAVA_HOME is now: $JAVA_HOME"
+        fi
+
+    # 4. Dependency Isolation & Build
     - name: Build Release
       working-directory: ./rust-bridge
-      env:
-        JAVA_HOME: ${{ steps.setup-java.outputs.path }}
-        MACOSX_DEPLOYMENT_TARGET: "10.15"
-      run: cargo build --release
+      shell: bash
+      run: |
+        # Re-export variables just in case shell isolation dropped them, though GITHUB_ENV handles it.
+        # macOS specific export as requested
+        if [ "${{ matrix.os }}" == "macos-latest" ]; then
+             export JAVA_HOME=$(/usr/libexec/java_home)
+        fi
+        
+        echo "Building in $(pwd)..."
+        cargo build --release
 
     - name: Upload Artifact (Windows)
       if: matrix.os == 'windows-latest'
