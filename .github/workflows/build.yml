@@ -94,21 +94,33 @@ jobs:
         fi
 
     # 4. Dependency Isolation & Build
-    - name: Build Release
+    # 4. Dependency Isolation & Build
+    
+    # Windows Build (PowerShell ensures MSVC env is respected)
+    - name: Build Release (Windows)
+      if: matrix.os == 'windows-latest'
+      working-directory: ./rust-bridge
+      shell: powershell
+      run: |
+        echo "=== Windows Linker Debug ==="
+        Get-Command link
+        
+        echo "Building in $(Get-Location)..."
+        $env:RUSTFLAGS="-C linker=link.exe"
+        cargo build --release
+
+    # Linux/macOS Build (Bash)
+    - name: Build Release (Unix)
+      if: matrix.os != 'windows-latest'
       working-directory: ./rust-bridge
       shell: bash
       run: |
-        # Re-export variables just in case shell isolation dropped them, though GITHUB_ENV handles it.
-        # macOS specific export as requested
+        # Re-export variables just in case shell isolation dropped them
         if [ "${{ matrix.os }}" == "macos-latest" ]; then
              export JAVA_HOME=$(/usr/libexec/java_home)
         fi
         
         echo "Building in $(pwd)..."
-        # Windows: Explicitly specify linker if needed, though PATH cleaning should suffice.
-        if [ "${{ matrix.os }}" == "windows-latest" ]; then
-             export RUSTFLAGS="-C linker=link.exe"
-        fi
         cargo build --release
 
     - name: Upload Artifact (Windows)
