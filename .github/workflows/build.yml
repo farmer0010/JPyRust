@@ -51,20 +51,11 @@ jobs:
         sudo apt-get install -y python3-dev
 
     # Windows: Setup MSVC
-    # 2026-01-16 Fix: Resolving link.exe conflict by removing Git from PATH
     - name: Setup MSVC (Windows)
       if: matrix.os == 'windows-latest'
       uses: ilammy/msvc-dev-cmd@v1
-
-    - name: Remove Git from PATH (Windows)
-      if: matrix.os == 'windows-latest'
-      shell: powershell
-      run: |
-        $path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
-        $newPath = ($path.Split(';') | Where-Object { $_ -notlike "*\Git\usr\bin*" -and $_ -ne "" }) -join ";"
-        echo "PATH=$newPath" >> $env:GITHUB_ENV
-        echo "Cleaned PATH for Windows Build (Next Step Persistence):"
-        echo $newPath
+      with:
+        arch: x64
 
     # Rust Setup
     - name: Set up Rust
@@ -80,10 +71,9 @@ jobs:
         echo "=== File System (Recursive) ==="
         ls -R
         
-        # Windows Linker Check
+        # Windows Linker Check (cmd-friendly check not needed here, will do in build step)
         if [ "${{ matrix.os }}" == "windows-latest" ]; then
-             echo "Checking which linker is active..."
-             where link || echo "link command not found"
+             echo "Skipping bash-based link check on Windows"
         fi
         
         # macOS Explicit JAVA_HOME injection check (User requirement)
@@ -96,17 +86,16 @@ jobs:
     # 4. Dependency Isolation & Build
     # 4. Dependency Isolation & Build
     
-    # Windows Build (PowerShell ensures MSVC env is respected)
+    # Windows Build (CMD ensures correct env inheritance from msvc-dev-cmd)
     - name: Build Release (Windows)
       if: matrix.os == 'windows-latest'
       working-directory: ./rust-bridge
-      shell: powershell
+      shell: cmd
       run: |
-        echo "=== Windows Linker Debug ==="
-        Get-Command link
+        echo === Windows Linker Debug ===
+        where link
         
-        echo "Building in $(Get-Location)..."
-        $env:RUSTFLAGS="-C linker=link.exe"
+        echo Building in %CD%
         cargo build --release
 
     # Linux/macOS Build (Bash)
