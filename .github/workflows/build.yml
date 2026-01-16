@@ -51,9 +51,20 @@ jobs:
         sudo apt-get install -y python3-dev
 
     # Windows: Setup MSVC
+    # 2026-01-16 Fix: Resolving link.exe conflict by removing Git from PATH
     - name: Setup MSVC (Windows)
       if: matrix.os == 'windows-latest'
       uses: ilammy/msvc-dev-cmd@v1
+
+    - name: Remove Git from PATH (Windows)
+      if: matrix.os == 'windows-latest'
+      shell: powershell
+      run: |
+        $path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
+        $newPath = ($path.Split(';') | Where-Object { $_ -notlike "*\Git\*" -and $_ -ne "" }) -join ";"
+        [Environment]::SetEnvironmentVariable("Path", $newPath, "Process")
+        echo "Cleaned PATH for Windows Build:"
+        echo $env:Path
 
     # Rust Setup
     - name: Set up Rust

@@ -1,8 +1,8 @@
 use jni::JNIEnv;
 use jni::objects::{JClass, JString};
-use jni::sys::{jint, jstring};
+use jni::sys::jint;
 use pyo3::prelude::*;
-use pyo3::types::{PyTuple, PyString};
+use pyo3::types::PyString;
 
 #[no_mangle]
 pub extern "system" fn Java_com_jpyrust_JPyRustBridge_hello<'local>(
@@ -112,7 +112,8 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_runPythonRaw<'local>(
 ) -> JString<'local> {
     
     // 1. Get raw pointer from Java DirectByteBuffer (Zero-Copy)
-    let buffer_ptr = env.get_direct_buffer_address(&data).expect("Could not get direct buffer address");
+    // Fix: Cast JObject to JByteBuffer using Into trait as requested
+    let buffer_ptr = env.get_direct_buffer_address((&data).into()).expect("Could not get direct buffer address");
     if buffer_ptr.is_null() {
         return env.new_string("Error: Buffer is null").unwrap();
     }
