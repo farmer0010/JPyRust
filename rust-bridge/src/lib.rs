@@ -24,7 +24,11 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_initPython<'local>(
         .expect("Couldn't get java string!")
         .into();
     
-// Configure Python Environment for Embedded Runtime
+    // [Patch] Avoid OpenMP Deadlocks
+    std::env::set_var("OMP_NUM_THREADS", "1");
+    std::env::set_var("KMP_DUPLICATE_LIB_OK", "TRUE");
+    std::env::set_var("MKL_THREADING_LAYER", "SEQUENTIAL");
+    // Configure Python Environment for Embedded Runtime
     std::env::set_var("PYTHONHOME", &home);
     
     // Add home to PYTHONPATH so ai_worker.py (which is in home) can be imported
@@ -40,18 +44,34 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_initPython<'local>(
         }
     }
     
-    // [Patch 2] Windows DLL Path Fix
+    // [Patch 2] Windows DLL Path Fix & sys.path configuration
     // Ensure Python can find DLLs in the temp directory (critical for numpy/ctypes on Windows)
     Python::with_gil(|py| {
         let sys = py.import("sys").ok();
         let os = py.import("os").ok();
         
-        if let (Some(_sys), Some(os)) = (sys, os) {
+        if let (Some(sys), Some(os)) = (sys, os) {
              let platform = os.getattr("name").unwrap_or_else(|_| PyString::new(py, "").into());
              if platform.to_string() == "nt" {
-                 // os.add_dll_directory(home)
+                 // 1. Add DLL directory
                  let _ = os.call_method1("add_dll_directory", (&home,));
+                 println!("[Rust] Bridge Initialized (V2 - CHECKED)");
                  println!("[Rust] Added DLL directory: {}", home);
+
+                 // 2. Add numpy.libs (if exists)
+                 let numpy_libs = format!("{}\\Lib\\site-packages\\numpy.libs", home);
+                 if std::path::Path::new(&numpy_libs).exists() {
+                     let _ = os.call_method1("add_dll_directory", (&numpy_libs,));
+                     println!("[Rust] Added numpy.libs: {}", numpy_libs);
+                 }
+
+                 // 3. [Crucial] Force append site-packages to sys.path
+                 // The presence of ._pth file (required for isolation) ignores PYTHONPATH env var.
+                 // We must manually add site-packages here.
+                 let site_packages = format!("{}\\Lib\\site-packages", home);
+                 let path = sys.getattr("path").expect("Failed to get sys.path");
+                 let _ = path.call_method1("append", (&site_packages,));
+                 println!("[Rust] Forced sys.path append: {}", site_packages);
              }
         }
     });
@@ -110,6 +130,13 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_runPythonRaw<'local>(
     height: jint,
     channels: jint,
 ) -> JString<'local> {
+    use std::io::Write;
+    println!("Rust: Entering process_image (runPythonRaw)");
+    std::io::stdout().flush().unwrap();
+
+    // [Patch] Prevent MKL/OpenMP Deadlocks
+    std::env::set_var("KMP_DUPLICATE_LIB_OK", "TRUE");
+    std::env::set_var("OMP_NUM_THREADS", "1");
     
     // 1. Get raw pointer from Java DirectByteBuffer (Zero-Copy)
     // Fix: Cast JObject to JByteBuffer using Into trait as requested
@@ -118,8 +145,11 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_runPythonRaw<'local>(
         return env.new_string("Error: Buffer is null").unwrap();
     }
 
-    // 2. Determine Mode: Benchmark (Raw) or Image
+    // 2. Determine Mode: Benchmark (Raw) or Image ==========================
+    
+    println!("Rust: Acquiring GIL...");
     let output = Python::with_gil(|py| -> PyResult<String> {
+        println!("Rust: GIL Acquired. Running Python...");
         let worker = py.import("ai_worker")?;
 
         // 3. True Zero-Copy Write-Back using Low-Level FFI

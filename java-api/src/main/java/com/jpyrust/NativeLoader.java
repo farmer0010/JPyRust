@@ -61,10 +61,37 @@ public class NativeLoader {
      * @param prefix       Prefix for the temporary directory
      * @return Path to the extracted directory
      */
+    /**
+     * Extracts a ZIP resource to a temporary directory.
+     * 
+     * @param resourcePath Path to the ZIP file in resources (e.g.,
+     *                     "/python_dist.zip")
+     * @param prefix       Prefix for the temporary directory
+     * @return Path to the extracted directory
+     */
     public static Path extractZip(String resourcePath, String prefix) {
         try {
             Path targetDir = Files.createTempDirectory(prefix);
             targetDir.toFile().deleteOnExit(); // Note: This might not delete non-empty dirs on some OS
+            return extractZip(resourcePath, targetDir);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to create temp directory with prefix: " + prefix, e);
+        }
+    }
+
+    /**
+     * Extracts a ZIP resource to a specific target directory.
+     *
+     * @param resourcePath Path to the ZIP file in resources
+     * @param targetDir    Directory to extract into
+     * @return Path to the extracted directory (same as targetDir)
+     */
+    public static Path extractZip(String resourcePath, Path targetDir) {
+        try {
+            // Ensure target directory exists
+            if (!Files.exists(targetDir)) {
+                Files.createDirectories(targetDir);
+            }
 
             try (InputStream is = NativeLoader.class.getResourceAsStream(resourcePath)) {
                 if (is == null) {

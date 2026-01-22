@@ -30,9 +30,21 @@ public class JPyRustBridge {
             System.out.println("=== JPyRust Zero-Config Initialization ===");
 
             // [Step 1] Python Runtime 추출 (from resources/python_dist.zip)
-            System.out.println("[Init] Extracting Python Runtime...");
-            java.nio.file.Path pythonHome = NativeLoader.extractZip("/python_dist.zip", "jpyrust_python_");
+            // [Init] Extracting Python Runtime...
+            java.nio.file.Path pythonHome;
+            String os = System.getProperty("os.name").toLowerCase();
+            if (os.contains("win")) {
+                // Windows: Use fixed ASCII path to avoid encoding issues with usernames
+                pythonHome = java.nio.file.Paths.get("C:/jpyrust_temp");
+                System.out.println("[Init] Windows detected. Forcing extraction to: " + pythonHome.toAbsolutePath());
+                NativeLoader.extractZip("/python_dist.zip", pythonHome);
+            } else {
+                // Non-Windows: Use default temp directory
+                pythonHome = NativeLoader.extractZip("/python_dist.zip", "jpyrust_python_");
+            }
             System.out.println("[Init] Python extracted to: " + pythonHome.toAbsolutePath());
+
+            // [Patch] ._pth deletion removed. Path configuration moved to Rust bridge.
 
             // [Debug] 파일 목록 및 존재 여부 확인 -> 파일로 작성 (Optional)
             File debugFile = new File("debug_listing.txt");
