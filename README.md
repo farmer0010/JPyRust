@@ -4,7 +4,7 @@
 
 [![Java](https://img.shields.io/badge/Java-17+-orange?logo=openjdk)](https://openjdk.org/)
 [![Rust](https://img.shields.io/badge/Rust-1.70+-orange?logo=rust)](https://www.rust-lang.org/)
-[![Python](https://img.shields.io/badge/Python-Embedded-blue?logo=python)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.10-blue?logo=python)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 [🇰🇷 한국어 버전 (Korean Version)](README_KR.md)
@@ -13,11 +13,13 @@
 
 ## 💡 Introduction
 
-**JPyRust** is a hybrid architecture that enables Spring Boot applications to run Python AI models (YOLO, PyTorch, TensorFlow, etc.) **in real-time with zero overhead**.
+**JPyRust** is a hybrid architecture that enables **Spring Boot** applications to run Python AI models (YOLO, PyTorch, TensorFlow, etc.) in **real-time with zero overhead**.
 
-Unlike the slow `ProcessBuilder` or complex `HTTP API` approaches, it uses **Rust JNI** and a **Persistent Embedded Python Daemon** to guarantee near-native speed.
+Unlike the slow `ProcessBuilder` or complex HTTP API approaches, it uses **Rust JNI** and a **Persistent Embedded Python Daemon** to guarantee near-native speed.
 
-### ⚡ Performance Benchmarks
+---
+
+## ⚡ Performance Benchmarks
 
 | Metric | Traditional Way (ProcessBuilder) | 🚀 JPyRust (Daemon) | Improvement |
 |--------|:--------------------------------:|:-------------------:|:-----------:|
@@ -42,23 +44,35 @@ This is not just an image processor; it is a **Universal Bridge** capable of exe
 
 ## 🏗️ Architecture
 
-A **3-Layer Architecture** where Java controls Python via Rust.
+A 3-Layer Architecture where Java controls Python via Rust.
 
 ```mermaid
-graph LR
-    User["👤 Client"] --> Boot["☕ Spring Boot (Controller)"]
-    Boot -- "JNI (High Speed)" --> Rust["🦀 Rust Bridge (Manager)"]
-    Rust -- "PIPE (stdin/out)" --> Python["🐍 Embedded Python (Worker)"]
-    
-    subgraph "Python Process"
-        Python --> Model1["YOLOv8"]
-        Python --> Model2["Sentiment"]
+graph TD
+    subgraph "Java Layer (Spring Boot)"
+        Controller["☕ Controller"]
+        JavaBridge["🔗 JPyRustBridge.java"]
+        Dist["📦 Embedded Python (Internal)"]
     end
+
+    subgraph "Rust Layer (JNI)"
+        RustBridge["🦀 jpyrust.dll"]
+    end
+
+    subgraph "Python Layer (Daemon)"
+        Daemon["🐍 Python Process"]
+        Models["🧠 AI Models (YOLO/NLP)"]
+    end
+
+    Controller --> JavaBridge
+    JavaBridge -- "Extracts on 1st run" --> Dist
+    JavaBridge -- "JNI Call" --> RustBridge
+    RustBridge -- "Spawn/Monitor" --> Daemon
+    Daemon -- "Keep-Alive" --> Models
 ```
 
-1.  **Java Layer:** Handles web requests, generates unique UUIDs, and calls Rust.
-2.  **Rust Layer:** Acts as a Supervisor (health check, I/O) and passes data safely.
-3.  **Python Layer:** Runs as an **Embedded Daemon**, dispatching tasks based on request type.
+1.  **Java Layer**: Handles web requests, generates unique UUIDs, and calls Rust. **Auto-extracts** the embedded Python runtime on startup.
+2.  **Rust Layer**: Acts as a Supervisor (health check, I/O) and passes data safely.
+3.  **Python Layer**: Runs as an **Embedded Daemon**, dispatching tasks based on request type.
 
 ---
 
@@ -67,12 +81,15 @@ graph LR
 How to add JPyRust to your own Spring Boot project.
 
 ### 1. Copy Dependencies
+
 Transfer these files to your project:
-* `rust-bridge/target/release/jpyrust.dll` (or .so) → Library path
-* `python-core/` → Script directory
-* `JPyRustBridge.java` → Java source path
+
+*   `rust-bridge/target/release/jpyrust.dll` (or `.so`) → Library path
+*   `python-core/` → Script directory (contains `ai_worker.py`)
+*   `demo-web/src/main/java/com/jpyrust/JPyRustBridge.java` → Java source path (Ensure you use the version with `processText` support)
 
 ### 2. Implement Controller
+
 Call Python logic as if it were a native Java method.
 
 ```java
@@ -92,27 +109,32 @@ public class MyAIController {
 ```
 
 ### 3. Configure (`application.yml`)
-No Python installation needed! Just point to the **Embedded Python** path included in the project.
+
+**No Python installation needed!** Just point to the Embedded Python path included in the project.
 
 ```yaml
 app:
   ai:
-    work-dir: ./temp_workspace       # Temp file storage
-    source-script-dir: ./python-core # Python scripts location
+    work-dir: C:/jpyrust_temp        # Temp file storage & Runtime location
+    source-script-dir: d:/JPyRust/python-core # Python scripts location
 ```
+
+> **How it works:**  
+> The `JPyRustBridge` detects if Python is missing in `work-dir`. If so, it automatically extracts the embedded `python_dist` from the JAR file to `work-dir`, setting up a full Python environment instantly.
 
 ---
 
 ## 🚀 Quick Start (Run the Demo)
 
 ### Prerequisites
-* **Java 17+**
-* (Optional) **Rust**: Only if you want to modify and rebuild the native bridge.
+*   **Java 17+**
+*   *(Optional)* **Rust**: Only if you want to modify and rebuild the native bridge.
 
 ### 1. Build & Run
+
 ```bash
 # 1. Clone Repository
-git clone [https://github.com/your-org/JPyRust.git](https://github.com/your-org/JPyRust.git)
+git clone https://github.com/your-org/JPyRust.git
 
 # 2. Build Rust Bridge (First time only)
 cd rust-bridge && cargo build --release && cd ..
@@ -123,8 +145,9 @@ java -jar demo-web/build/libs/demo-web-0.0.1-SNAPSHOT.jar
 ```
 
 ### 2. Test
-* **Webcam Demo:** Open `http://localhost:8080/video.html` in your browser.
-* **API Test:**
+
+*   **Webcam Demo**: Open `http://localhost:8080/video.html` in your browser.
+*   **API Test**:
     ```bash
     curl -X POST -H "Content-Type: application/json" \
          -d '{"text":"This project is insanely fast!"}' \
@@ -135,22 +158,26 @@ java -jar demo-web/build/libs/demo-web-0.0.1-SNAPSHOT.jar
 
 ## 🔧 Troubleshooting
 
-**Q. Do I need to install Python separately?**
-* **A. No!** This project is designed to use **Embedded Python**. It automatically sets up the runtime environment when Java starts.
+### Q. Do I need to install Python separately?
+**A. No!** This project is designed to use **Embedded Python**. It automatically sets up the runtime environment when Java starts by extracting it from the JAR.
 
-**Q. I get a 'DLL not found' error.**
-* **A.** Ensure `jpyrust.dll` (Windows) or `libjpyrust.so` (Linux/Mac) is in your `java.library.path`. The demo project loads this automatically.
+### Q. I get a 'DLL not found' error.
+**A.** Ensure `jpyrust.dll` (Windows) or `libjpyrust.so` (Linux/Mac) is in your `java.library.path`. The demo project loads this automatically.
 
-**Q. Does it slow down with multiple users?**
-* **A.** Requests are processed sequentially by the single daemon, but due to the extreme speed (ms), lag is unnoticeable for moderate traffic. (Multi-worker support is planned).
+### Q. Does it slow down with multiple users?
+**A.** The Python daemon currently processes requests sequentially to ensure thread safety with the GIL. However, due to the extreme speed (ms), lag is unnoticeable for moderate traffic. (Multi-worker support is planned).
 
 ---
 
 ## 🤝 Contributing
+
 Bug reports and feature requests are welcome! Please submit a Pull Request.
 
+---
+
 ## 📄 License
-This project is licensed under the **MIT License**. Feel free to use and modify it.
+
+This project is licensed under the MIT License. Feel free to use and modify it.
 
 ---
 
