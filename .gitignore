@@ -60,6 +60,7 @@ error_log.txt
 build_error.txt
 debug_listing.txt
 execution_log.txt
+hs_err_pid*
 
 # =====================
 # Work Directory Files
@@ -67,6 +68,10 @@ execution_log.txt
 jpyrust_temp/
 input_*.dat
 output_*.dat
+*.dat
+result.jpg
+test_result.png
+captured_*.jpg
 
 # =====================
 # OS / IDE
@@ -96,5 +101,3 @@ application-prod.yml
 test-output/
 *.test.jpg
 *.test.png
-result.jpg
-result.png

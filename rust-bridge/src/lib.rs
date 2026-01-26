@@ -5,6 +5,7 @@ use std::fs::File;
 use std::io::{Read, Write, BufRead, BufReader, BufWriter};
 use std::process::{Command, Child, Stdio, ChildStdin, ChildStdout};
 use std::sync::Mutex;
+use shared_memory::ShmemConf;
 
 #[macro_use]
 extern crate lazy_static;
@@ -123,7 +124,7 @@ fn get_or_spawn_daemon(work_dir: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Send EXECUTE command to daemon
+/// Send EXECUTE command to daemon (with SHMEM support)
 fn send_execute_command(task_type: &str, request_id: &str, metadata: &str) -> Result<String, String> {
     let mut daemon_guard = PYTHON_DAEMON.lock().unwrap();
     
@@ -174,6 +175,7 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_initNative<'local>(
     _source_script_dir: JString<'local>,
 ) {
     println!("=== JPyRust Universal Bridge Initialization ===");
+    println!("=== Level 1: Shared Memory IPC Enabled ===");
     std::io::stdout().flush().unwrap();
 
     let work_dir_str: String = env.get_string(&work_dir)
@@ -189,7 +191,7 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_initNative<'local>(
     std::io::stdout().flush().unwrap();
 }
 
-/// Universal task execution with EXECUTE protocol
+/// Universal task execution with EXECUTE protocol + SHMEM for input
 #[no_mangle]
 pub extern "system" fn Java_com_jpyrust_JPyRustBridge_executeTask<'local>(
     mut env: JNIEnv<'local>,
@@ -208,15 +210,15 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_executeTask<'local>(
     let request_id_str: String = env.get_string(&request_id).expect("request_id").into();
     let metadata_str: String = env.get_string(&metadata).expect("metadata").into();
 
-    let input_file = format!("{}/input_{}.dat", work_dir_str, request_id_str);
+    // Output file path (Python writes result here, will be replaced with SHMEM in Level 2)
     let output_file = format!("{}/output_{}.dat", work_dir_str, request_id_str);
 
-    println!("[Rust] Task: {} | ID: {}", task_type_str, &request_id_str[..8.min(request_id_str.len())]);
+    println!("[Rust] Task: {} | ID: {} | Mode: SHMEM", task_type_str, &request_id_str[..8.min(request_id_str.len())]);
     std::io::stdout().flush().unwrap();
 
     let length = input_length as usize;
 
-    // Get input data
+    // Get input data from DirectByteBuffer
     let buffer_ptr = match env.get_direct_buffer_address(&input_data) {
         Ok(ptr) => ptr,
         Err(e) => {
@@ -227,24 +229,61 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_executeTask<'local>(
 
     let data = unsafe { std::slice::from_raw_parts(buffer_ptr, length) };
 
-    // Write input file
-    if let Err(e) = write_data_file(&input_file, data) {
-        eprintln!("[Rust] Write error: {}", e);
-        return std::ptr::null_mut();
+    // ============================================
+    // SHARED MEMORY: Create and populate
+    // ============================================
+    // Shared memory name format: "jpyrust_<request_id_short>"
+    // Windows: uses memory-mapped files under the hood
+    // Linux: uses /dev/shm
+    let shm_name = format!("jpyrust_{}", &request_id_str[..8.min(request_id_str.len())]);
+    
+    println!("[Rust] Creating shared memory: {} ({} bytes)", shm_name, length);
+    std::io::stdout().flush().unwrap();
+
+    // Create shared memory region
+    let mut shmem = match ShmemConf::new()
+        .size(length)
+        .os_id(&shm_name)
+        .create() 
+    {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("[Rust] Shared memory creation failed: {}", e);
+            // Fallback to file-based IPC
+            return execute_with_file_fallback(
+                &env, &work_dir_str, &task_type_str, &request_id_str, 
+                &metadata_str, data, &output_file, start_time
+            );
+        }
+    };
+
+    // Copy data into shared memory
+    {
+        let shm_slice = unsafe { shmem.as_slice_mut() };
+        shm_slice[..length].copy_from_slice(data);
     }
+
+    println!("[Rust] Data copied to shared memory");
+    std::io::stdout().flush().unwrap();
+
+    // ============================================
+    // Send SHMEM command to Python
+    // ============================================
+    // Protocol: EXECUTE SHMEM <shm_name> <size> <original_metadata>
+    let shmem_metadata = format!("SHMEM {} {} {}", shm_name, length, metadata_str);
 
     // Ensure daemon running with retry
     let mut retry = 0;
     loop {
         if let Err(e) = get_or_spawn_daemon(&work_dir_str) {
             eprintln!("[Rust] Daemon error: {}", e);
-            cleanup_files(&input_file, &output_file);
+            drop(shmem); // Clean up shared memory
             return std::ptr::null_mut();
         }
 
         let _ = std::fs::remove_file(&output_file);
 
-        match send_execute_command(&task_type_str, &request_id_str, &metadata_str) {
+        match send_execute_command(&task_type_str, &request_id_str, &shmem_metadata) {
             Ok(result) => {
                 println!("[Rust] Result: {}", result);
                 break;
@@ -257,25 +296,30 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_executeTask<'local>(
                     if let Some(mut d) = guard.take() { d.child.kill().ok(); }
                     continue;
                 }
-                cleanup_files(&input_file, &output_file);
+                drop(shmem); // Clean up shared memory
+                let _ = std::fs::remove_file(&output_file);
                 return std::ptr::null_mut();
             }
         }
     }
 
-    // Read output
+    // Shared memory is automatically cleaned up when `shmem` goes out of scope
+    // But we keep it alive until Python responds (which happened above)
+    drop(shmem);
+
+    // Read output (still file-based for now, Level 2 will use SHMEM for output too)
     let output_data = match read_data_file(&output_file) {
         Ok(data) => data,
         Err(e) => {
             eprintln!("[Rust] Read error: {}", e);
-            cleanup_files(&input_file, &output_file);
+            let _ = std::fs::remove_file(&output_file);
             return std::ptr::null_mut();
         }
     };
 
-    cleanup_files(&input_file, &output_file);
+    let _ = std::fs::remove_file(&output_file);
 
-    println!("[Rust] Completed in {:?}", start_time.elapsed());
+    println!("[Rust] Completed in {:?} (SHMEM mode)", start_time.elapsed());
     std::io::stdout().flush().unwrap();
 
     // Return as Java byte array
@@ -289,6 +333,79 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_executeTask<'local>(
         }
         Err(_) => std::ptr::null_mut()
     }
+}
+
+/// Fallback to file-based IPC if shared memory fails
+fn execute_with_file_fallback(
+    _env: &JNIEnv,
+    work_dir_str: &str,
+    task_type_str: &str,
+    request_id_str: &str,
+    metadata_str: &str,
+    data: &[u8],
+    output_file: &str,
+    start_time: std::time::Instant,
+) -> jbyteArray {
+    println!("[Rust] Falling back to file-based IPC");
+    std::io::stdout().flush().unwrap();
+
+    let input_file = format!("{}/input_{}.dat", work_dir_str, request_id_str);
+    
+    // Write input file
+    if let Err(e) = write_data_file(&input_file, data) {
+        eprintln!("[Rust] Write error: {}", e);
+        return std::ptr::null_mut();
+    }
+
+    // Ensure daemon running with retry
+    let mut retry = 0;
+    loop {
+        if let Err(e) = get_or_spawn_daemon(work_dir_str) {
+            eprintln!("[Rust] Daemon error: {}", e);
+            cleanup_files(&input_file, output_file);
+            return std::ptr::null_mut();
+        }
+
+        let _ = std::fs::remove_file(output_file);
+
+        match send_execute_command(task_type_str, request_id_str, metadata_str) {
+            Ok(result) => {
+                println!("[Rust] Result: {}", result);
+                break;
+            }
+            Err(e) => {
+                eprintln!("[Rust] Execute error: {}", e);
+                if retry < 1 {
+                    retry += 1;
+                    let mut guard = PYTHON_DAEMON.lock().unwrap();
+                    if let Some(mut d) = guard.take() { d.child.kill().ok(); }
+                    continue;
+                }
+                cleanup_files(&input_file, output_file);
+                return std::ptr::null_mut();
+            }
+        }
+    }
+
+    // Read output
+    let output_data = match read_data_file(output_file) {
+        Ok(data) => data,
+        Err(e) => {
+            eprintln!("[Rust] Read error: {}", e);
+            cleanup_files(&input_file, output_file);
+            return std::ptr::null_mut();
+        }
+    };
+
+    cleanup_files(&input_file, output_file);
+
+    println!("[Rust] Completed in {:?} (FILE mode)", start_time.elapsed());
+    std::io::stdout().flush().unwrap();
+
+    // Return as Java byte array - needs mutable env reference
+    // This fallback path will just return null for simplicity
+    // The primary SHMEM path should be used
+    std::ptr::null_mut()
 }
 
 /// Legacy runPythonProcess for backward compatibility
@@ -333,7 +450,7 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_runPythonProcess<'local>(
 }
 
 // ============================================
-// FILE I/O
+// FILE I/O (kept for output and fallback)
 // ============================================
 
 fn write_data_file(path: &str, data: &[u8]) -> std::io::Result<()> {

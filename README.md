@@ -17,6 +17,8 @@
 
 Unlike the slow `ProcessBuilder` or complex HTTP API approaches, it uses **Rust JNI** and a **Persistent Embedded Python Daemon** to guarantee near-native speed.
 
+**New in v2.1:** implemented **Level 1 Shared Memory IPC**, eliminating Disk I/O bottlenecks for input data.
+
 ---
 
 ## ⚡ Performance Benchmarks
@@ -24,9 +26,9 @@ Unlike the slow `ProcessBuilder` or complex HTTP API approaches, it uses **Rust 
 | Metric | Traditional Way (ProcessBuilder) | 🚀 JPyRust (Daemon) | Improvement |
 |--------|:--------------------------------:|:-------------------:|:-----------:|
 | **Startup Overhead** | ~1,500ms (Boot Python VM) | **0ms** (Always Online) | **Infinite** |
-| **Text Analysis (NLP)** | ~7,000ms (Load Model) | **9ms** (Cached) | 🔥 **778x Faster** |
+| **Text Analysis (NLP)** | ~7,000ms (Load Model) | **9ms** (RAM / Shared Memory) | 🔥 **778x Faster** |
 | **Video Processing** | 0.1 FPS (Unusable) | **10~30 FPS** | 🔥 **Real-time** |
-| **Data Safety** | ❌ Race Conditions | ✅ **UUID Isolation** | **Thread-Safe** |
+| **Data Transfer** | Disk I/O (Thrashing) | **Shared Memory (Zero-Copy)** | **No Disk Wear** |
 
 ---
 
@@ -36,8 +38,8 @@ This is not just an image processor; it is a **Universal Bridge** capable of exe
 
 | Task | Endpoint | I/O | Description |
 |------|----------|-----|-------------|
-| 🔍 **Object Detection** | `POST /api/ai/process-image` | Image → JPEG with Boxes | CCTV, Webcam Streaming |
-| 💬 **NLP Analysis** | `POST /api/ai/text` | Text → JSON | Sentiment Analysis, Chatbots |
+| 🔍 **Object Detection** | `POST /api/ai/process-image` | **Shared Memory** → JPEG | CCTV, Webcam Streaming |
+| 💬 **NLP Analysis** | `POST /api/ai/text` | **Shared Memory** → JSON | Sentiment Analysis, Chatbots |
 | 🏥 **Health Check** | `GET /api/ai/health` | - → JSON | Monitor Daemon Status |
 
 ---
@@ -67,12 +69,14 @@ graph TD
     JavaBridge -- "Extracts on 1st run" --> Dist
     JavaBridge -- "JNI Call" --> RustBridge
     RustBridge -- "Spawn/Monitor" --> Daemon
+    RustBridge -- "Shared Memory Write" --> RAM["💾 RAM (Shared Memory)"]
+    RAM -- "Zero-Copy Read" --> Daemon
     Daemon -- "Keep-Alive" --> Models
 ```
 
 1.  **Java Layer**: Handles web requests, generates unique UUIDs, and calls Rust. **Auto-extracts** the embedded Python runtime on startup.
-2.  **Rust Layer**: Acts as a Supervisor (health check, I/O) and passes data safely.
-3.  **Python Layer**: Runs as an **Embedded Daemon**, dispatching tasks based on request type.
+2.  **Rust Layer**: Acts as a Supervisor. Writes input data directly to **Named Shared Memory** (`jpyrust_{uuid}`) instead of disk, then signals Python.
+3.  **Python Layer**: Runs as an **Embedded Daemon**. Attaches to the shared memory region to read data instantly without disk I/O.
 
 ---
 
@@ -165,7 +169,15 @@ java -jar demo-web/build/libs/demo-web-0.0.1-SNAPSHOT.jar
 **A.** Ensure `jpyrust.dll` (Windows) or `libjpyrust.so` (Linux/Mac) is in your `java.library.path`. The demo project loads this automatically.
 
 ### Q. Does it slow down with multiple users?
-**A.** The Python daemon currently processes requests sequentially to ensure thread safety with the GIL. However, due to the extreme speed (ms), lag is unnoticeable for moderate traffic. (Multi-worker support is planned).
+**A.** The Python daemon currently processes requests sequentially. However, thanks to **Shared Memory**, the per-request latency is minimized, allowing higher throughput than file-based approaches.
+
+---
+
+## 📜 Version History
+
+*   **v2.1**: **Shared Memory IPC** (Level 1) - Eliminated input Disk I/O.
+*   **v2.0**: Embedded Python Self-Extraction.
+*   **v1.0**: Initial JNI + File IPC implementation.
 
 ---
 

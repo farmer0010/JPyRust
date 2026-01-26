@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ai_worker.py - Universal Bridge Daemon with Task-Based Dispatching
+ai_worker.py - Universal Bridge Daemon with Shared Memory Support
 
 Supports multiple task types:
   - YOLO: Image object detection
@@ -10,16 +10,16 @@ Protocol:
   - EXECUTE <task_type> <request_id> <metadata...>
   - EXIT
 
-Responses:
-  - READY
-  - DONE <result>
-  - ERROR <message>
+Metadata formats:
+  - File Mode: <w> <h> <c> (YOLO) | (empty) (SENTIMENT)
+  - SHMEM Mode: SHMEM <shm_name> <size> <original_metadata...>
 """
 
 import sys
 import os
 import struct
 import time
+import multiprocessing.shared_memory
 
 # ============================================
 # INITIALIZATION
@@ -66,6 +66,44 @@ def initialize_models():
 
 
 # ============================================
+# DATA READER HELPER
+# ============================================
+def read_input_data(request_id, metadata):
+    """
+    Reads input data either from Shared Memory or File.
+    Returns (bytes_data, remaining_metadata)
+    """
+    # 1. Check for Shared Memory Protocol
+    if len(metadata) >= 3 and metadata[0] == "SHMEM":
+        shm_name = metadata[1]
+        data_size = int(metadata[2])
+        real_metadata = metadata[3:]
+        
+        try:
+            shm = multiprocessing.shared_memory.SharedMemory(name=shm_name)
+            # Create a copy of the data (or allow zero-copy if possible downstream)
+            # Logic: Read safely, close handle
+            data = bytes(shm.buf[:data_size]) 
+            shm.close() # Detach
+            return data, real_metadata
+        except Exception as e:
+            raise RuntimeError(f"Shared Memory read failed: {e}")
+
+    # 2. Default: File Protocol
+    input_path = f"{WORK_DIR}/input_{request_id}.dat"
+    try:
+        with open(input_path, "rb") as f:
+            length_bytes = f.read(HEADER_SIZE)
+            if not length_bytes:
+                raise ValueError("Empty input file")
+            data_length = struct.unpack(">I", length_bytes)[0]
+            data = f.read(data_length)
+        return data, metadata
+    except FileNotFoundError:
+        raise RuntimeError(f"Input file not found: {input_path}")
+
+
+# ============================================
 # TASK HANDLERS
 # ============================================
 
@@ -78,14 +116,14 @@ def resize_image(image: np.ndarray, target_width: int) -> np.ndarray:
     return cv2.resize(image, (target_width, new_height), interpolation=cv2.INTER_LINEAR)
 
 
-def handle_yolo_task(request_id: str, metadata: list) -> str:
+def handle_yolo_task(request_id: str, raw_metadata: list) -> str:
     """
     YOLO Object Detection Task.
-    Metadata: [width, height, channels]
-    Input: Raw BGR image bytes
-    Output: JPEG with bounding boxes
     """
     try:
+        # Read Data (SHMEM or File)
+        raw_data, metadata = read_input_data(request_id, raw_metadata)
+        
         if len(metadata) < 3:
             return "ERROR Missing metadata (width, height, channels)"
         
@@ -94,16 +132,6 @@ def handle_yolo_task(request_id: str, metadata: list) -> str:
         channels = int(metadata[2])
         
         start_time = time.time()
-        
-        # File paths
-        input_path = f"{WORK_DIR}/input_{request_id}.dat"
-        output_path = f"{WORK_DIR}/output_{request_id}.dat"
-        
-        # Read input image
-        with open(input_path, "rb") as f:
-            length_bytes = f.read(HEADER_SIZE)
-            data_length = struct.unpack(">I", length_bytes)[0]
-            raw_data = f.read(data_length)
         
         # Create numpy array
         image = np.frombuffer(raw_data, dtype=np.uint8).reshape((height, width, channels))
@@ -129,13 +157,16 @@ def handle_yolo_task(request_id: str, metadata: list) -> str:
         
         data_to_write = jpeg_data.tobytes()
         
-        # Write output
+        # Write output (Still file-based for Level 1)
+        output_path = f"{WORK_DIR}/output_{request_id}.dat"
         with open(output_path, "wb") as f:
             f.write(struct.pack(">I", len(data_to_write)))
             f.write(data_to_write)
         
         elapsed = (time.time() - start_time) * 1000
-        print(f"[YOLO] ID:{request_id[:8]} | {original_shape} | {detections} objects | {elapsed:.0f}ms", flush=True)
+        # Log if SHMEM was used
+        mode = "SHMEM" if raw_metadata[0] == "SHMEM" else "FILE"
+        print(f"[YOLO] ID:{request_id[:8]} | {mode} | {detections} objs | {elapsed:.0f}ms", flush=True)
         
         return f"DONE {detections}"
         
@@ -146,27 +177,16 @@ def handle_yolo_task(request_id: str, metadata: list) -> str:
         return f"ERROR {e}"
 
 
-def handle_sentiment_task(request_id: str, metadata: list) -> str:
+def handle_sentiment_task(request_id: str, raw_metadata: list) -> str:
     """
     Sentiment Analysis Task.
-    Metadata: (ignored)
-    Input: UTF-8 text
-    Output: Sentiment result (Positive/Negative/Neutral)
     """
     try:
+        # Read Data
+        raw_data, metadata = read_input_data(request_id, raw_metadata)
+        
         start_time = time.time()
-        
-        # File paths
-        input_path = f"{WORK_DIR}/input_{request_id}.dat"
-        output_path = f"{WORK_DIR}/output_{request_id}.dat"
-        
-        # Read input text
-        with open(input_path, "rb") as f:
-            length_bytes = f.read(HEADER_SIZE)
-            data_length = struct.unpack(">I", length_bytes)[0]
-            text_bytes = f.read(data_length)
-        
-        text = text_bytes.decode('utf-8')
+        text = raw_data.decode('utf-8')
         
         # Simple rule-based sentiment analysis
         text_lower = text.lower()
@@ -191,19 +211,19 @@ def handle_sentiment_task(request_id: str, metadata: list) -> str:
         
         # Write output
         result_bytes = result.encode('utf-8')
+        output_path = f"{WORK_DIR}/output_{request_id}.dat"
         with open(output_path, "wb") as f:
             f.write(struct.pack(">I", len(result_bytes)))
             f.write(result_bytes)
         
         elapsed = (time.time() - start_time) * 1000
-        print(f"[SENTIMENT] ID:{request_id[:8]} | {len(text)} chars | {sentiment} | {elapsed:.0f}ms", flush=True)
+        mode = "SHMEM" if raw_metadata[0] == "SHMEM" else "FILE"
+        print(f"[SENTIMENT] ID:{request_id[:8]} | {mode} | {sentiment} | {elapsed:.0f}ms", flush=True)
         
         return f"DONE {sentiment}"
         
     except Exception as e:
         print(f"[SENTIMENT Error] {e}", flush=True)
-        import traceback
-        traceback.print_exc()
         return f"ERROR {e}"
 
 
@@ -246,7 +266,7 @@ def daemon_loop():
                 elif cmd == "EXECUTE":
                     # Format: EXECUTE <task_type> <request_id> <metadata...>
                     if len(parts) < 3:
-                        print("ERROR Missing arguments (need task_type, request_id)", flush=True)
+                        print("ERROR Missing arguments", flush=True)
                         continue
                     
                     task_type = parts[1].upper()
@@ -261,10 +281,12 @@ def daemon_loop():
                     else:
                         print(f"ERROR Unknown task type: {task_type}", flush=True)
                 
-                # Legacy support for old PROCESS command
+                # Legacy support for old PROCESS command (Keep for safety)
                 elif cmd == "PROCESS":
                     if len(parts) >= 5:
+                        # Convert legacy PROCESS to YOLO task (always FILE mode)
                         width, height, channels, request_id = parts[1], parts[2], parts[3], parts[4]
+                        # Construct legacy metadata for File I/O
                         result = handle_yolo_task(request_id, [width, height, channels])
                         print(result, flush=True)
                     else:
@@ -293,4 +315,4 @@ if __name__ == "__main__":
         daemon_loop()
     else:
         print("Usage: python ai_worker.py [--daemon]")
-        print("Supported tasks: YOLO, SENTIMENT")
+        print("Supported tasks: YOLO, SENTIMENT, SHMEM-IPC")

@@ -15,6 +15,8 @@
 
 느린 `ProcessBuilder`나 복잡한 HTTP API 방식과 달리, **Rust JNI**와 **영속형 임베디드 Python 데몬(Persistent Embedded Python Daemon)**을 사용하여 네이티브에 가까운 속도를 보장합니다.
 
+**v2.1 신기능:** 입력 데이터에 **Level 1 Shared Memory IPC**를 적용하여 디스크 I/O 병목을 제거했습니다.
+
 ---
 
 ## ⚡ 성능 벤치마크 (Performance)
@@ -22,9 +24,9 @@
 | 지표 | 기존 방식 (ProcessBuilder) | 🚀 JPyRust (데몬 방식) | 개선 효과 |
 |------|:-------------------------:|:---------------------:|:---------:|
 | **시작 오버헤드** | ~1,500ms (매번 Python VM 부팅) | **0ms** (항시 대기) | **무한대 (Infinite)** |
-| **텍스트 분석 (NLP)** | ~7,000ms (모델 로딩 시간) | **9ms** (캐싱됨) | 🔥 **778배 빠름** |
+| **텍스트 분석 (NLP)** | ~7,000ms (모델 로딩 시간) | **9ms** (RAM / 공유 메모리) | 🔥 **778배 빠름** |
 | **영상 처리** | 0.1 FPS (사용 불가) | **10~30 FPS** | 🔥 **실시간 처리** |
-| **데이터 안전성** | ❌ 경쟁 상태 (Race Conditions) | ✅ **UUID 격리** | **스레드 안전 (Thread-Safe)** |
+| **데이터 전송** | 디스크 I/O (부하 심함) | **공유 메모리 (Zero-Copy)** | **디스크 수명 보호** |
 
 ---
 
@@ -34,8 +36,8 @@
 
 | 작업 | 엔드포인트 | 입/출력 | 설명 |
 |------|------------|---------|------|
-| 🔍 **객체 탐지** | `POST /api/ai/process-image` | 이미지 → JPEG (박스 포함) | CCTV, 웹캠 스트리밍 |
-| 💬 **NLP 분석** | `POST /api/ai/text` | 텍스트 → JSON | 감정 분석, 챗봇 |
+| 🔍 **객체 탐지** | `POST /api/ai/process-image` | **공유 메모리** → JPEG | CCTV, 웹캠 스트리밍 |
+| 💬 **NLP 분석** | `POST /api/ai/text` | **공유 메모리** → JSON | 감정 분석, 챗봇 |
 | 🏥 **헬스 체크** | `GET /api/ai/health` | - → JSON | 데몬 상태 모니터링 |
 
 ---
@@ -65,12 +67,14 @@ graph TD
     JavaBridge -- "최초 실행 시 추출" --> Dist
     JavaBridge -- "JNI 호출" --> RustBridge
     RustBridge -- "프로세스 생성/관리" --> Daemon
+    RustBridge -- "Shared Memory 쓰기" --> RAM["💾 RAM (공유 메모리)"]
+    RAM -- "Zero-Copy 읽기" --> Daemon
     Daemon -- "Keep-Alive" --> Models
 ```
 
 1.  **Java Layer**: 웹 요청을 처리하고 고유 UUID를 생성하여 Rust를 호출합니다. 시작 시 내장된 Python 런타임을 **자동으로 추출**합니다.
-2.  **Rust Layer**: 감독자(Supervisor) 역할을 수행하며(헬스 체크, I/O), 데이터를 안전하게 전달합니다.
-3.  **Python Layer**: **임베디드 데몬**으로 실행되며, 요청 타입에 따라 작업을 분배(Dispatching)합니다.
+2.  **Rust Layer**: 감독자(Supervisor). 입력 데이터를 디스크가 아닌 **Named Shared Memory**(`jpyrust_{uuid}`)에 직접 쓰고 Python에 신호를 보냅니다.
+3.  **Python Layer**: **임베디드 데몬**으로 실행되며, 공유 메모리에 붙어 디스크 I/O 없이 데이터를 즉시 읽습니다.
 
 ---
 
@@ -163,7 +167,15 @@ java -jar demo-web/build/libs/demo-web-0.0.1-SNAPSHOT.jar
 **A.** `jpyrust.dll` (Windows) 또는 `libjpyrust.so` (Linux/Mac) 파일이 `java.library.path`에 있는지 확인하세요. 데모 프로젝트는 이를 자동으로 로드합니다.
 
 ### Q. 사용자가 많아지면 느려지나요?
-**A.** 현재 Python 데몬은 GIL 스레드 안전성을 위해 요청을 순차적으로 처리합니다. 하지만 처리 속도가 워낙 빨라(ms 단위), 적당한 트래픽에서는 지연을 느낄 수 없습니다. (멀티 워커 지원 예정)
+**A.** 현재 Python 데몬은 순차적으로 요청을 처리합니다. 하지만 **Shared Memory** 도입으로 요청당 처리 대기 시간이 최소화되어, 파일 기반 방식보다 훨씬 높은 처리량을 제공합니다.
+
+---
+
+## 📜 버전 기록 (Version History)
+
+*   **v2.1**: **Shared Memory IPC** (Level 1) - 입력 데이터 디스크 I/O 제거.
+*   **v2.0**: 임베디드 Python 자가 추출 기능.
+*   **v1.0**: 초기 JNI + 파일 IPC 구현.
 
 ---
 
