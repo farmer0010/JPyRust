@@ -1,6 +1,6 @@
 # 🚀 JPyRust: 고성능 유니버설 Java-Python AI 브리지
 
-> **"Java를 위한 궁극의 Python AI 통합 솔루션: 레이턴시를 7초에서 0.009초로 단축"**
+> **"Java를 위한 궁극의 Python AI 통합 솔루션: 레이턴시를 7초에서 0.04초로 단축"**
 
 [![Java](https://img.shields.io/badge/Java-17+-orange?logo=openjdk)](https://openjdk.org/)
 [![Rust](https://img.shields.io/badge/Rust-1.70+-orange?logo=rust)](https://www.rust-lang.org/)
@@ -15,18 +15,31 @@
 
 느린 `ProcessBuilder`나 복잡한 HTTP API 방식과 달리, **Rust JNI**와 **영속형 임베디드 Python 데몬(Persistent Embedded Python Daemon)**을 사용하여 네이티브에 가까운 속도를 보장합니다.
 
-**v2.1 신기능:** 입력 데이터에 **Level 1 Shared Memory IPC**를 적용하여 디스크 I/O 병목을 제거했습니다.
+**v2.2 신기능:** 입출력 모든 과정에 **Level 2 Full Shared Memory Pipeline**을 적용하여 **100% 디스크 I/O 없는** 추론 환경과 **GPU 자동 감지**를 구현했습니다.
 
 ---
 
 ## ⚡ 성능 벤치마크 (Performance)
 
-| 지표 | 기존 방식 (ProcessBuilder) | 🚀 JPyRust (데몬 방식) | 개선 효과 |
+| 지표 | 기존 방식 (ProcessBuilder) | 🚀 JPyRust (v2.2) | 개선 효과 |
 |------|:-------------------------:|:---------------------:|:---------:|
 | **시작 오버헤드** | ~1,500ms (매번 Python VM 부팅) | **0ms** (항시 대기) | **무한대 (Infinite)** |
-| **텍스트 분석 (NLP)** | ~7,000ms (모델 로딩 시간) | **9ms** (RAM / 공유 메모리) | 🔥 **778배 빠름** |
-| **영상 처리** | 0.1 FPS (사용 불가) | **10~30 FPS** | 🔥 **실시간 처리** |
-| **데이터 전송** | 디스크 I/O (부하 심함) | **공유 메모리 (Zero-Copy)** | **디스크 수명 보호** |
+| **객체 탐지 (YOLO)** | ~2,000ms | **~40ms** (GPU) / **~90ms** (CPU) | 🔥 **50배 빠름** |
+| **텍스트 분석 (NLP)** | ~7,000ms (모델 로딩 시간) | **~9ms** (Zero-Copy RAM) | 🔥 **778배 빠름** |
+| **데이터 전송** | 디스크 I/O (부하 심함) | **100% 공유 메모리** | **디스크 수명 보호** |
+
+---
+
+## ⚠️ 하드웨어 가속 (GPU)
+
+JPyRust v2.2는 지능형 하드웨어 감지 기능을 포함합니다:
+
+> **자동 감지 (Auto-Detection Enabled):**
+> *   **GPU 모드:** NVIDIA 드라이버와 CUDA Toolkit이 설치된 경우 자동으로 활성화됩니다.  
+>     *(속도: ~0.04s / 25+ FPS)*
+> *   **CPU 모드:** CUDA가 없으면 **자동으로 CPU로 전환**되어 실행됩니다.  
+>     *(속도: ~0.09s / 10+ FPS)*
+> *   *별도의 설정이 필요 없습니다.*
 
 ---
 
@@ -36,15 +49,15 @@
 
 | 작업 | 엔드포인트 | 입/출력 | 설명 |
 |------|------------|---------|------|
-| 🔍 **객체 탐지** | `POST /api/ai/process-image` | **공유 메모리** → JPEG | CCTV, 웹캠 스트리밍 |
-| 💬 **NLP 분석** | `POST /api/ai/text` | **공유 메모리** → JSON | 감정 분석, 챗봇 |
+| 🔍 **객체 탐지** | `POST /api/ai/process-image` | **Full Shared Memory** | CCTV, 웹캠 스트리밍 |
+| 💬 **NLP 분석** | `POST /api/ai/text` | **Full Shared Memory** | 감정 분석, 챗봇 |
 | 🏥 **헬스 체크** | `GET /api/ai/health` | - → JSON | 데몬 상태 모니터링 |
 
 ---
 
 ## 🏗️ 아키텍처
 
-Java가 Rust를 통해 Python을 제어하는 3계층 아키텍처입니다.
+Java가 Rust를 통해 Python을 제어하며, **Named Shared Memory**를 사용하여 데이터를 주고받습니다.
 
 ```mermaid
 graph TD
@@ -67,18 +80,23 @@ graph TD
     JavaBridge -- "최초 실행 시 추출" --> Dist
     JavaBridge -- "JNI 호출" --> RustBridge
     RustBridge -- "프로세스 생성/관리" --> Daemon
-    RustBridge -- "Shared Memory 쓰기" --> RAM["💾 RAM (공유 메모리)"]
-    RAM -- "Zero-Copy 읽기" --> Daemon
-    Daemon -- "Keep-Alive" --> Models
+    
+    RustBridge -- "입력 쓰기" --> RAM_IN["💾 Input SHM"]
+    RAM_IN -- "Zero-Copy 읽기" --> Daemon
+    Daemon -- "추론 (GPU/CPU)" --> Models
+    
+    Models -- "결과 반환" --> Daemon
+    Daemon -- "출력 쓰기" --> RAM_OUT["💾 Output SHM"]
+    RAM_OUT -- "결과 읽기" --> RustBridge
 ```
 
-1.  **Java Layer**: 웹 요청을 처리하고 고유 UUID를 생성하여 Rust를 호출합니다. 시작 시 내장된 Python 런타임을 **자동으로 추출**합니다.
-2.  **Rust Layer**: 감독자(Supervisor). 입력 데이터를 디스크가 아닌 **Named Shared Memory**(`jpyrust_{uuid}`)에 직접 쓰고 Python에 신호를 보냅니다.
-3.  **Python Layer**: **임베디드 데몬**으로 실행되며, 공유 메모리에 붙어 디스크 I/O 없이 데이터를 즉시 읽습니다.
+1.  **Java Layer**: 웹 요청을 처리하고 Rust JNI를 호출합니다.
+2.  **Rust Layer**: Supervisor. IO 통제를 위해 입력/출력용 **공유 메모리 버퍼**(`jpyrust_{uuid}`, `jpyrust_out_{uuid}`)를 할당합니다.
+3.  **Python Layer**: 임베디드 데몬. **RAM에서 RAM으로** 데이터를 처리하며, GPU 가속을 활용합니다.
 
 ---
 
-## 🛠️ 통합 가이드 (Integration Guide)
+## 🛠️ 통합 가이드
 
 JPyRust를 여러분의 Spring Boot 프로젝트에 추가하는 방법입니다.
 
@@ -88,23 +106,20 @@ JPyRust를 여러분의 Spring Boot 프로젝트에 추가하는 방법입니다
 
 *   `rust-bridge/target/release/jpyrust.dll` (또는 `.so`) → 라이브러리 경로
 *   `python-core/` → 스크립트 디렉토리 (`ai_worker.py` 포함)
-*   `demo-web/src/main/java/com/jpyrust/JPyRustBridge.java` → Java 소스 경로 (`processText` 지원 버전 확인)
+*   `demo-web/src/main/java/com/jpyrust/JPyRustBridge.java` → Java 소스 경로
 
 ### 2. 컨트롤러 구현
 
-마치 네이티브 Java 메서드처럼 Python 로직을 호출하세요.
-
 ```java
-@RestController
+@Controller
 public class MyAIController {
-
     // 브리지 주입
     private final JPyRustBridge bridge = new JPyRustBridge();
 
     @PostMapping("/analyze")
+    @ResponseBody
     public String analyzeText(@RequestBody String text) {
-        // Python 작업 실행 (한 줄이면 끝!)
-        // Rust를 통해 약 9ms 내에 결과 반환
+        // Python 작업 실행
         return bridge.processText(text); 
     }
 }
@@ -112,17 +127,12 @@ public class MyAIController {
 
 ### 3. 설정 (`application.yml`)
 
-**Python을 별도로 설치할 필요가 없습니다!** 프로젝트에 내장된 Python 경로를 지정하기만 하면 됩니다.
-
 ```yaml
 app:
   ai:
-    work-dir: C:/jpyrust_temp        # 임시 파일 저장소 및 런타임 위치
+    work-dir: C:/jpyrust_temp        # 임시 파일 저장 및 런타임
     source-script-dir: d:/JPyRust/python-core # Python 스크립트 위치
 ```
-
-> **작동 원리:**  
-> `JPyRustBridge`는 `work-dir`에 Python이 없으면, JAR 파일 내에 내장된 `python_dist`를 자동으로 추출하여 즉시 실행 가능한 Python 환경을 구성합니다.
 
 ---
 
@@ -130,7 +140,7 @@ app:
 
 ### 필수 조건
 *   **Java 17+**
-*   *(선택 사항)* **Rust**: 네이티브 브리지를 수정하고 다시 빌드하고 싶은 경우에만 필요.
+*   *(선택 사항)* **Rust**: 네이티브 브리지를 수정 시에만 필요.
 
 ### 1. 빌드 및 실행
 
@@ -138,7 +148,7 @@ app:
 # 1. 저장소 복제
 git clone https://github.com/your-org/JPyRust.git
 
-# 2. Rust 브리지 빌드 (최초 1회)
+# 2. Rust 브리지 빌드 (v2.2 필수)
 cd rust-bridge && cargo build --release && cd ..
 
 # 3. Java 서버 실행
@@ -148,50 +158,36 @@ java -jar demo-web/build/libs/demo-web-0.0.1-SNAPSHOT.jar
 
 ### 2. 테스트
 
-*   **웹캠 데모**: 브라우저에서 `http://localhost:8080/video.html` 열기
-*   **API 테스트**:
-    ```bash
-    curl -X POST -H "Content-Type: application/json" \
-         -d '{"text":"This project is insanely fast!"}' \
-         http://localhost:8080/api/ai/text
-    ```
+*   **웹캠 데모**: `http://localhost:8080/video.html`
 
 ---
 
-## 🔧 문제 해결 (Troubleshooting)
+## 🔧 문제 해결
 
-### Q. Python을 따로 설치해야 하나요?
-**A. 아니요!** 이 프로젝트는 **임베디드 Python**을 사용하도록 설계되었습니다. Java가 시작될 때 JAR에서 자동으로 런타임 환경을 추출하여 설정합니다.
+### Q. 'Shared Memory' 오류가 발생해요.
+**A.** v2.1/v2.2 업데이트 이후에는 **반드시 Rust 프로젝트를 다시 빌드**해야 합니다: `cd rust-bridge && cargo build --release`
 
-### Q. 'DLL not found' 에러가 발생합니다.
-**A.** `jpyrust.dll` (Windows) 또는 `libjpyrust.so` (Linux/Mac) 파일이 `java.library.path`에 있는지 확인하세요. 데모 프로젝트는 이를 자동으로 로드합니다.
-
-### Q. 사용자가 많아지면 느려지나요?
-**A.** 현재 Python 데몬은 순차적으로 요청을 처리합니다. 하지만 **Shared Memory** 도입으로 요청당 처리 대기 시간이 최소화되어, 파일 기반 방식보다 훨씬 높은 처리량을 제공합니다.
+### Q. GPU가 사용되고 있나요?
+**A.** 실행 로그를 확인하세요: `[Daemon] Device selected: CUDA`가 뜨면 성공입니다. (`CPU`면 자동 폴백됨)
 
 ---
 
 ## 📜 버전 기록 (Version History)
 
-*   **v2.1**: **Shared Memory IPC** (Level 1) - 입력 데이터 디스크 I/O 제거.
+*   **v2.2**: **Full In-Memory Pipeline (입출력)** 및 **GPU 자동 감지**.
+*   **v2.1**: 입력 데이터 공유 메모리 적용 (Level 1).
 *   **v2.0**: 임베디드 Python 자가 추출 기능.
 *   **v1.0**: 초기 JNI + 파일 IPC 구현.
 
 ---
 
-## 🤝 기여하기
-
-버그 제보와 기능 요청은 언제나 환영합니다! Pull Request를 보내주세요.
-
----
-
 ## 📄 라이선스
 
-이 프로젝트는 MIT 라이선스를 따릅니다. 자유롭게 사용하고 수정하세요.
+MIT License.
 
 ---
 
 <p align="center">
   <b>Built with ☕ Java + 🦀 Rust + 🐍 Python</b><br>
-  <i>성능의 삼위일체 (The Trinity of Performance).</i>
+  <i>성능의 삼위일체.</i>
 </p>

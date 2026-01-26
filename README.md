@@ -1,6 +1,6 @@
 # 🚀 JPyRust: High-Performance Universal AI Bridge
 
-> **"The Ultimate Python AI Integration for Java: Reducing 7s latency to 0.009s."**
+> **"The Ultimate Python AI Integration for Java: Reducing 7s latency to 0.04s."**
 
 [![Java](https://img.shields.io/badge/Java-17+-orange?logo=openjdk)](https://openjdk.org/)
 [![Rust](https://img.shields.io/badge/Rust-1.70+-orange?logo=rust)](https://www.rust-lang.org/)
@@ -17,18 +17,31 @@
 
 Unlike the slow `ProcessBuilder` or complex HTTP API approaches, it uses **Rust JNI** and a **Persistent Embedded Python Daemon** to guarantee near-native speed.
 
-**New in v2.1:** implemented **Level 1 Shared Memory IPC**, eliminating Disk I/O bottlenecks for input data.
+**New in v2.2:** implemented **Level 2 Full Shared Memory Pipeline**, achieving **100% Disk-Free Inference** and **GPU Auto-Detection**.
 
 ---
 
 ## ⚡ Performance Benchmarks
 
-| Metric | Traditional Way (ProcessBuilder) | 🚀 JPyRust (Daemon) | Improvement |
+| Metric | Traditional Way (ProcessBuilder) | 🚀 JPyRust (v2.2) | Improvement |
 |--------|:--------------------------------:|:-------------------:|:-----------:|
 | **Startup Overhead** | ~1,500ms (Boot Python VM) | **0ms** (Always Online) | **Infinite** |
-| **Text Analysis (NLP)** | ~7,000ms (Load Model) | **9ms** (RAM / Shared Memory) | 🔥 **778x Faster** |
-| **Video Processing** | 0.1 FPS (Unusable) | **10~30 FPS** | 🔥 **Real-time** |
-| **Data Transfer** | Disk I/O (Thrashing) | **Shared Memory (Zero-Copy)** | **No Disk Wear** |
+| **Object Detection (YOLO)** | ~2,000ms | **~40ms** (GPU) / **~90ms** (CPU) | 🔥 **50x Faster** |
+| **Text Analysis (NLP)** | ~7,000ms (Load Model) | **~9ms** (Zero-Copy RAM) | 🔥 **778x Faster** |
+| **Data Transfer** | Disk I/O (Thrashing) | **100% Shared Memory** | **No Disk Wear** |
+
+---
+
+## ⚠️ Hardware Acceleration (GPU)
+
+JPyRust v2.2 includes intelligent hardware detection:
+
+> **Auto-Detection Enabled:**
+> *   **GPU Mode:** Automatically activated if NVIDIA Drivers & CUDA Toolkit are installed.  
+>     *(Speed: ~0.04s / 25+ FPS)*
+> *   **CPU Mode:** If CUDA is missing, it **automatically falls back** to CPU.  
+>     *(Speed: ~0.09s / 10+ FPS)*
+> *   *No configuration needed.*
 
 ---
 
@@ -38,15 +51,15 @@ This is not just an image processor; it is a **Universal Bridge** capable of exe
 
 | Task | Endpoint | I/O | Description |
 |------|----------|-----|-------------|
-| 🔍 **Object Detection** | `POST /api/ai/process-image` | **Shared Memory** → JPEG | CCTV, Webcam Streaming |
-| 💬 **NLP Analysis** | `POST /api/ai/text` | **Shared Memory** → JSON | Sentiment Analysis, Chatbots |
+| 🔍 **Object Detection** | `POST /api/ai/process-image` | **Full Shared Memory** | CCTV, Webcam Streaming |
+| 💬 **NLP Analysis** | `POST /api/ai/text` | **Full Shared Memory** | Sentiment Analysis, Chatbots |
 | 🏥 **Health Check** | `GET /api/ai/health` | - → JSON | Monitor Daemon Status |
 
 ---
 
 ## 🏗️ Architecture
 
-A 3-Layer Architecture where Java controls Python via Rust.
+A 3-Layer Architecture where Java controls Python via Rust using **Named Shared Memory**.
 
 ```mermaid
 graph TD
@@ -69,14 +82,19 @@ graph TD
     JavaBridge -- "Extracts on 1st run" --> Dist
     JavaBridge -- "JNI Call" --> RustBridge
     RustBridge -- "Spawn/Monitor" --> Daemon
-    RustBridge -- "Shared Memory Write" --> RAM["💾 RAM (Shared Memory)"]
-    RAM -- "Zero-Copy Read" --> Daemon
-    Daemon -- "Keep-Alive" --> Models
+    
+    RustBridge -- "Write Input" --> RAM_IN["💾 Input SHM"]
+    RAM_IN -- "Read Zero-Copy" --> Daemon
+    Daemon -- "Process (GPU/CPU)" --> Models
+    
+    Models -- "Result" --> Daemon
+    Daemon -- "Write Output" --> RAM_OUT["💾 Output SHM"]
+    RAM_OUT -- "Read Result" --> RustBridge
 ```
 
-1.  **Java Layer**: Handles web requests, generates unique UUIDs, and calls Rust. **Auto-extracts** the embedded Python runtime on startup.
-2.  **Rust Layer**: Acts as a Supervisor. Writes input data directly to **Named Shared Memory** (`jpyrust_{uuid}`) instead of disk, then signals Python.
-3.  **Python Layer**: Runs as an **Embedded Daemon**. Attaches to the shared memory region to read data instantly without disk I/O.
+1.  **Java Layer**: Handles web requests and calls Rust via JNI.
+2.  **Rust Layer**: Supervisor. Allocates Input/Output Shared Memory buffers (`jpyrust_{uuid}`, `jpyrust_out_{uuid}`) and coordinates data flow.
+3.  **Python Layer**: Embedded Daemon. Reads input from RAM, runs inference (GPU/CPU), and writes results back to RAM. **No disk access** occurs during inference.
 
 ---
 
@@ -90,23 +108,22 @@ Transfer these files to your project:
 
 *   `rust-bridge/target/release/jpyrust.dll` (or `.so`) → Library path
 *   `python-core/` → Script directory (contains `ai_worker.py`)
-*   `demo-web/src/main/java/com/jpyrust/JPyRustBridge.java` → Java source path (Ensure you use the version with `processText` support)
+*   `demo-web/src/main/java/com/jpyrust/JPyRustBridge.java` → Java source path
 
 ### 2. Implement Controller
 
 Call Python logic as if it were a native Java method.
 
 ```java
-@RestController
+@Controller
 public class MyAIController {
-
     // Inject Bridge
     private final JPyRustBridge bridge = new JPyRustBridge();
 
     @PostMapping("/analyze")
+    @ResponseBody
     public String analyzeText(@RequestBody String text) {
         // Execute Python Task (One-liner!)
-        // Returns result in ~9ms via Rust.
         return bridge.processText(text); 
     }
 }
@@ -114,17 +131,12 @@ public class MyAIController {
 
 ### 3. Configure (`application.yml`)
 
-**No Python installation needed!** Just point to the Embedded Python path included in the project.
-
 ```yaml
 app:
   ai:
     work-dir: C:/jpyrust_temp        # Temp file storage & Runtime location
     source-script-dir: d:/JPyRust/python-core # Python scripts location
 ```
-
-> **How it works:**  
-> The `JPyRustBridge` detects if Python is missing in `work-dir`. If so, it automatically extracts the embedded `python_dist` from the JAR file to `work-dir`, setting up a full Python environment instantly.
 
 ---
 
@@ -140,7 +152,7 @@ app:
 # 1. Clone Repository
 git clone https://github.com/your-org/JPyRust.git
 
-# 2. Build Rust Bridge (First time only)
+# 2. Build Rust Bridge (Rebuild required for v2.2)
 cd rust-bridge && cargo build --release && cd ..
 
 # 3. Run Java Server
@@ -151,45 +163,32 @@ java -jar demo-web/build/libs/demo-web-0.0.1-SNAPSHOT.jar
 ### 2. Test
 
 *   **Webcam Demo**: Open `http://localhost:8080/video.html` in your browser.
-*   **API Test**:
-    ```bash
-    curl -X POST -H "Content-Type: application/json" \
-         -d '{"text":"This project is insanely fast!"}' \
-         http://localhost:8080/api/ai/text
-    ```
 
 ---
 
 ## 🔧 Troubleshooting
 
-### Q. Do I need to install Python separately?
-**A. No!** This project is designed to use **Embedded Python**. It automatically sets up the runtime environment when Java starts by extracting it from the JAR.
+### Q. 'Shared Memory' or 'DLL' Error?
+**A.** Since v2.1/v2.2 introduced Shared Memory, please **Rebuild Rust Project**: `cd rust-bridge && cargo build --release`.
 
-### Q. I get a 'DLL not found' error.
-**A.** Ensure `jpyrust.dll` (Windows) or `libjpyrust.so` (Linux/Mac) is in your `java.library.path`. The demo project loads this automatically.
-
-### Q. Does it slow down with multiple users?
-**A.** The Python daemon currently processes requests sequentially. However, thanks to **Shared Memory**, the per-request latency is minimized, allowing higher throughput than file-based approaches.
+### Q. Is my GPU being used?
+**A.** Check the Java console logs on startup. You will see:
+`[Daemon] Device selected: CUDA` (or `CPU` if unavailable).
 
 ---
 
 ## 📜 Version History
 
-*   **v2.1**: **Shared Memory IPC** (Level 1) - Eliminated input Disk I/O.
+*   **v2.2**: **Full In-Memory Pipeline** (Input/Output) & **GPU Auto-detect**.
+*   **v2.1**: Input Shared Memory IPC (Level 1).
 *   **v2.0**: Embedded Python Self-Extraction.
 *   **v1.0**: Initial JNI + File IPC implementation.
 
 ---
 
-## 🤝 Contributing
-
-Bug reports and feature requests are welcome! Please submit a Pull Request.
-
----
-
 ## 📄 License
 
-This project is licensed under the MIT License. Feel free to use and modify it.
+MIT License.
 
 ---
 

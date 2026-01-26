@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ai_worker.py - Universal Bridge Daemon with Shared Memory Support
+ai_worker.py - Universal Bridge Daemon with Shared Memory Support (Level 2)
 
 Supports multiple task types:
   - YOLO: Image object detection
@@ -11,8 +11,9 @@ Protocol:
   - EXIT
 
 Metadata formats:
-  - File Mode: <w> <h> <c> (YOLO) | (empty) (SENTIMENT)
-  - SHMEM Mode: SHMEM <shm_name> <size> <original_metadata...>
+  - File Mode: <w> <h> <c> (Legacy)
+  - SHMEM Mode (v2.1 input only): SHMEM <in_id> <in_len> <meta...>
+  - SHMEM Mode (v2.2 full): SHMEM <in_id> <in_len> <out_id> <out_cap> <meta...>
 """
 
 import sys
@@ -25,8 +26,6 @@ import multiprocessing.shared_memory
 # INITIALIZATION
 # ============================================
 print("[Python Daemon] Universal Bridge Starting...", flush=True)
-print(f"[Debug] sys.executable: {sys.executable}", flush=True)
-
 import numpy as np
 import cv2
 
@@ -36,6 +35,14 @@ try:
 except ImportError as e:
     print(f"[Warning] Failed to import ultralytics: {e}", flush=True)
     YOLO_AVAILABLE = False
+
+try:
+    import torch
+    DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f"[Daemon] Device selected: {DEVICE.upper()}", flush=True)
+except ImportError:
+    DEVICE = 'cpu'
+    print("[Daemon] Torch not found, defaulting to CPU", flush=True)
 
 # Configuration
 WORK_DIR = "C:/jpyrust_temp"
@@ -57,39 +64,54 @@ def initialize_models():
         print("[Daemon] Loading YOLOv8 model...", flush=True)
         start_time = time.time()
         yolo_model = YOLO("yolov8n.pt")
-        print(f"[Daemon] YOLO model loaded in {time.time() - start_time:.2f}s", flush=True)
+        yolo_model.to(DEVICE)
+        print(f"[Daemon] YOLO model loaded on {DEVICE.upper()} in {time.time() - start_time:.2f}s", flush=True)
     else:
         print("[Daemon] YOLO not available", flush=True)
     
-    # Sentiment model is rule-based, no loading needed
     print("[Daemon] Sentiment analyzer ready (rule-based)", flush=True)
 
 
 # ============================================
-# DATA READER HELPER
+# DATA I/O HELPERS
 # ============================================
-def read_input_data(request_id, metadata):
-    """
-    Reads input data either from Shared Memory or File.
-    Returns (bytes_data, remaining_metadata)
-    """
-    # 1. Check for Shared Memory Protocol
-    if len(metadata) >= 3 and metadata[0] == "SHMEM":
-        shm_name = metadata[1]
-        data_size = int(metadata[2])
-        real_metadata = metadata[3:]
-        
-        try:
-            shm = multiprocessing.shared_memory.SharedMemory(name=shm_name)
-            # Create a copy of the data (or allow zero-copy if possible downstream)
-            # Logic: Read safely, close handle
-            data = bytes(shm.buf[:data_size]) 
-            shm.close() # Detach
-            return data, real_metadata
-        except Exception as e:
-            raise RuntimeError(f"Shared Memory read failed: {e}")
 
-    # 2. Default: File Protocol
+def parse_input_protocol(request_id, metadata):
+    """
+    Parses metadata to determine I/O mode.
+    Returns: (data_bytes, remaining_metadata, output_shm_info or None)
+    """
+    # Check for SHMEM Protocol
+    if len(metadata) > 0 and metadata[0] == "SHMEM":
+        # SHMEM <in_id> <in_len> ...
+        in_shm_name = metadata[1]
+        in_size = int(metadata[2])
+        
+        # Check for Output SHMEM (Level 2)
+        # We expect at least 3 args for just input, 5 args for input+output
+        # Format: SHMEM <in_id> <in_len> <out_id> <out_cap> <real_meta...>
+        
+        # Heuristic: Check if the 3rd argument looks like an output SHMEM ID (jpyrust_out_)
+        if len(metadata) >= 5 and "jpyrust_out_" in metadata[3]:
+            out_shm_name = metadata[3]
+            out_cap = int(metadata[4])
+            real_metadata = metadata[5:]
+            out_info = (out_shm_name, out_cap)
+        else:
+            # Level 1 (Input only)
+            real_metadata = metadata[3:]
+            out_info = None
+
+        # Read Input from Shared Memory
+        try:
+            shm = multiprocessing.shared_memory.SharedMemory(name=in_shm_name)
+            data = bytes(shm.buf[:in_size])
+            shm.close()
+            return data, real_metadata, out_info
+        except Exception as e:
+            raise RuntimeError(f"Input SHMEM read failed: {e}")
+
+    # Default: File Protocol
     input_path = f"{WORK_DIR}/input_{request_id}.dat"
     try:
         with open(input_path, "rb") as f:
@@ -98,9 +120,40 @@ def read_input_data(request_id, metadata):
                 raise ValueError("Empty input file")
             data_length = struct.unpack(">I", length_bytes)[0]
             data = f.read(data_length)
-        return data, metadata
+        return data, metadata, None
     except FileNotFoundError:
         raise RuntimeError(f"Input file not found: {input_path}")
+
+
+def write_output_data(request_id, data_bytes, out_shm_info):
+    """
+    Writes output data to Shared Memory (if available) or File.
+    Returns: number of bytes written
+    """
+    if out_shm_info:
+        shm_name, capacity = out_shm_info
+        if len(data_bytes) > capacity:
+            # Error: Buffer overflow
+            # In a real system, we might resize or handle this, but for now log error
+            print(f"[Error] Output size ({len(data_bytes)}) exceeds buffer capacity ({capacity})", flush=True)
+            return 0 # Fail silently or handle upstream
+        
+        try:
+            shm = multiprocessing.shared_memory.SharedMemory(name=shm_name)
+            shm.buf[:len(data_bytes)] = data_bytes
+            shm.close()
+            return len(data_bytes)
+        except Exception as e:
+            print(f"[Error] Output SHMEM write failed: {e}", flush=True)
+            return 0
+            
+    else:
+        # File Fallback
+        output_path = f"{WORK_DIR}/output_{request_id}.dat"
+        with open(output_path, "wb") as f:
+            f.write(struct.pack(">I", len(data_bytes)))
+            f.write(data_bytes)
+        return len(data_bytes)
 
 
 # ============================================
@@ -117,12 +170,8 @@ def resize_image(image: np.ndarray, target_width: int) -> np.ndarray:
 
 
 def handle_yolo_task(request_id: str, raw_metadata: list) -> str:
-    """
-    YOLO Object Detection Task.
-    """
     try:
-        # Read Data (SHMEM or File)
-        raw_data, metadata = read_input_data(request_id, raw_metadata)
+        raw_data, metadata, out_info = parse_input_protocol(request_id, raw_metadata)
         
         if len(metadata) < 3:
             return "ERROR Missing metadata (width, height, channels)"
@@ -133,14 +182,13 @@ def handle_yolo_task(request_id: str, raw_metadata: list) -> str:
         
         start_time = time.time()
         
-        # Create numpy array
+        # Decode Image
         image = np.frombuffer(raw_data, dtype=np.uint8).reshape((height, width, channels))
         original_shape = image.shape
         
-        # Resize
+        # Inference
         image = resize_image(image, TARGET_WIDTH)
         
-        # YOLO Inference
         if yolo_model is not None:
             results = yolo_model(image, verbose=False)
             detections = len(results[0].boxes) if results[0].boxes is not None else 0
@@ -149,7 +197,7 @@ def handle_yolo_task(request_id: str, raw_metadata: list) -> str:
             annotated_frame = image
             detections = 0
         
-        # Encode as JPEG
+        # Encode Result
         encode_params = [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
         success, jpeg_data = cv2.imencode('.jpg', annotated_frame, encode_params)
         if not success:
@@ -157,18 +205,18 @@ def handle_yolo_task(request_id: str, raw_metadata: list) -> str:
         
         data_to_write = jpeg_data.tobytes()
         
-        # Write output (Still file-based for Level 1)
-        output_path = f"{WORK_DIR}/output_{request_id}.dat"
-        with open(output_path, "wb") as f:
-            f.write(struct.pack(">I", len(data_to_write)))
-            f.write(data_to_write)
+        # Write Output
+        bytes_written = write_output_data(request_id, data_to_write, out_info)
         
         elapsed = (time.time() - start_time) * 1000
-        # Log if SHMEM was used
-        mode = "SHMEM" if raw_metadata[0] == "SHMEM" else "FILE"
+        mode = "FULL-SHMEM" if out_info else ("SHMEM-IN" if raw_metadata[0] == "SHMEM" else "FILE")
+        
         print(f"[YOLO] ID:{request_id[:8]} | {mode} | {detections} objs | {elapsed:.0f}ms", flush=True)
         
-        return f"DONE {detections}"
+        # Return DONE <length> logic
+        # Legacy: DONE <obj_count> (Rust didn't care about the value, just the signal)
+        # New: DONE <bytes_written> (Rust needs to know how much to read from SHMEM)
+        return f"DONE {bytes_written}"
         
     except Exception as e:
         print(f"[YOLO Error] {e}", flush=True)
@@ -178,21 +226,16 @@ def handle_yolo_task(request_id: str, raw_metadata: list) -> str:
 
 
 def handle_sentiment_task(request_id: str, raw_metadata: list) -> str:
-    """
-    Sentiment Analysis Task.
-    """
     try:
-        # Read Data
-        raw_data, metadata = read_input_data(request_id, raw_metadata)
+        raw_data, metadata, out_info = parse_input_protocol(request_id, raw_metadata)
         
         start_time = time.time()
         text = raw_data.decode('utf-8')
         
-        # Simple rule-based sentiment analysis
+        # Analysis
         text_lower = text.lower()
-        
-        negative_words = ['bad', 'sad', 'terrible', 'awful', 'hate', 'angry', 'disappointed', 'horrible', 'worst', 'fail', 'poor']
-        positive_words = ['good', 'great', 'excellent', 'happy', 'love', 'amazing', 'wonderful', 'best', 'awesome', 'fantastic']
+        negative_words = ['bad', 'sad', 'terrible', 'awful', 'hate', 'angry', 'fail']
+        positive_words = ['good', 'great', 'happy', 'love', 'amazing', 'best']
         
         neg_count = sum(1 for word in negative_words if word in text_lower)
         pos_count = sum(1 for word in positive_words if word in text_lower)
@@ -208,19 +251,15 @@ def handle_sentiment_task(request_id: str, raw_metadata: list) -> str:
             confidence = 0.5
         
         result = f"{sentiment} (confidence: {confidence:.2f})"
-        
-        # Write output
         result_bytes = result.encode('utf-8')
-        output_path = f"{WORK_DIR}/output_{request_id}.dat"
-        with open(output_path, "wb") as f:
-            f.write(struct.pack(">I", len(result_bytes)))
-            f.write(result_bytes)
+        
+        # Write Output
+        bytes_written = write_output_data(request_id, result_bytes, out_info)
         
         elapsed = (time.time() - start_time) * 1000
-        mode = "SHMEM" if raw_metadata[0] == "SHMEM" else "FILE"
-        print(f"[SENTIMENT] ID:{request_id[:8]} | {mode} | {sentiment} | {elapsed:.0f}ms", flush=True)
+        print(f"[SENTIMENT] ID:{request_id[:8]} | {len(text)} chars | {sentiment} | {elapsed:.0f}ms", flush=True)
         
-        return f"DONE {sentiment}"
+        return f"DONE {bytes_written}"
         
     except Exception as e:
         print(f"[SENTIMENT Error] {e}", flush=True)
@@ -238,9 +277,6 @@ TASK_HANDLERS = {
 
 
 def daemon_loop():
-    """
-    Main daemon loop with task-based dispatching.
-    """
     print("[Daemon] Entering command loop...", flush=True)
     print("READY", flush=True)
     
@@ -248,13 +284,10 @@ def daemon_loop():
         while True:
             try:
                 line = sys.stdin.readline()
-                
-                if not line:
-                    break
+                if not line: break
                 
                 command = line.strip()
-                if not command:
-                    continue
+                if not command: continue
                 
                 parts = command.split()
                 cmd = parts[0].upper()
@@ -273,37 +306,23 @@ def daemon_loop():
                     request_id = parts[2]
                     metadata = parts[3:] if len(parts) > 3 else []
                     
-                    # Dispatch to handler
                     handler = TASK_HANDLERS.get(task_type)
                     if handler:
                         result = handler(request_id, metadata)
                         print(result, flush=True)
                     else:
                         print(f"ERROR Unknown task type: {task_type}", flush=True)
-                
-                # Legacy support for old PROCESS command (Keep for safety)
-                elif cmd == "PROCESS":
-                    if len(parts) >= 5:
-                        # Convert legacy PROCESS to YOLO task (always FILE mode)
+
+                elif cmd == "PROCESS": # Legacy
+                     if len(parts) >= 5:
                         width, height, channels, request_id = parts[1], parts[2], parts[3], parts[4]
-                        # Construct legacy metadata for File I/O
                         result = handle_yolo_task(request_id, [width, height, channels])
                         print(result, flush=True)
-                    else:
-                        print("ERROR Invalid PROCESS command", flush=True)
                 
-                else:
-                    print(f"ERROR Unknown command: {cmd}", flush=True)
-                    
             except (KeyboardInterrupt, EOFError):
                 break
-            except OSError:
-                break
             except Exception as e:
-                try:
-                    print(f"ERROR Unexpected: {e}", flush=True)
-                except:
-                    pass
+                 print(f"ERROR Unexpected: {e}", flush=True)
     except:
         pass
 
@@ -315,4 +334,3 @@ if __name__ == "__main__":
         daemon_loop()
     else:
         print("Usage: python ai_worker.py [--daemon]")
-        print("Supported tasks: YOLO, SENTIMENT, SHMEM-IPC")
