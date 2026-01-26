@@ -1,6 +1,3 @@
-# JPyRust Python Dependencies
-# Add your packages here (e.g., numpy, torch)
-# These will be automatically installed into the embedded runtime during build.
-requests==2.31.0
-numpy==1.26.4
-opencv-python-headless==4.9.0.80
+numpy
+opencv-python-headless
+ultralytics

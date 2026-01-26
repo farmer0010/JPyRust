@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JPyRust - Real-time YOLO Video Stream</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+            color: #fff;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            text-align: center;
+            margin-bottom: 10px;
+            font-size: 2.5rem;
+            background: linear-gradient(90deg, #00d9ff, #00ff88);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .subtitle {
+            text-align: center;
+            color: #888;
+            margin-bottom: 30px;
+        }
+        
+        .video-container {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        
+        .video-box {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            padding: 15px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .video-box h3 {
+            text-align: center;
+            margin-bottom: 10px;
+            font-weight: 500;
+            color: #aaa;
+        }
+        
+        .video-box video,
+        .video-box img {
+            border-radius: 8px;
+            background: #000;
+            display: block;
+        }
+        
+        #webcam {
+            width: 640px;
+            height: 480px;
+            object-fit: cover;
+        }
+        
+        #output {
+            width: 640px;
+            height: 480px;
+            object-fit: contain;
+        }
+        
+        .stats {
+            display: flex;
+            justify-content: center;
+            gap: 40px;
+            margin: 30px 0;
+            flex-wrap: wrap;
+        }
+        
+        .stat-box {
+            background: rgba(0, 217, 255, 0.1);
+            border: 1px solid rgba(0, 217, 255, 0.3);
+            border-radius: 12px;
+            padding: 20px 40px;
+            text-align: center;
+        }
+        
+        .stat-box.fps {
+            background: rgba(0, 255, 136, 0.1);
+            border-color: rgba(0, 255, 136, 0.3);
+        }
+        
+        .stat-value {
+            font-size: 2.5rem;
+            font-weight: bold;
+            font-family: 'Courier New', monospace;
+        }
+        
+        .stat-value.fps {
+            color: #00ff88;
+        }
+        
+        .stat-value.latency {
+            color: #00d9ff;
+        }
+        
+        .stat-label {
+            color: #888;
+            font-size: 0.9rem;
+            margin-top: 5px;
+        }
+        
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin: 20px 0;
+        }
+        
+        button {
+            padding: 15px 40px;
+            font-size: 1.1rem;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        
+        #startBtn {
+            background: linear-gradient(135deg, #00d9ff, #00ff88);
+            color: #1a1a2e;
+        }
+        
+        #startBtn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(0, 217, 255, 0.3);
+        }
+        
+        #stopBtn {
+            background: rgba(255, 100, 100, 0.2);
+            color: #ff6464;
+            border: 1px solid #ff6464;
+        }
+        
+        #stopBtn:hover {
+            background: rgba(255, 100, 100, 0.3);
+        }
+        
+        #stopBtn:disabled,
+        #startBtn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .status {
+            text-align: center;
+            padding: 10px;
+            border-radius: 8px;
+            margin: 20px auto;
+            max-width: 600px;
+        }
+        
+        .status.ready {
+            background: rgba(0, 255, 136, 0.1);
+            color: #00ff88;
+        }
+        
+        .status.error {
+            background: rgba(255, 100, 100, 0.1);
+            color: #ff6464;
+        }
+        
+        .status.streaming {
+            background: rgba(0, 217, 255, 0.1);
+            color: #00d9ff;
+        }
+        
+        /* Hidden canvas for frame capture */
+        #captureCanvas {
+            display: none;
+        }
+        
+        .footer {
+            text-align: center;
+            margin-top: 40px;
+            color: #555;
+            font-size: 0.85rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 JPyRust Video Stream</h1>
+        <p class="subtitle">Real-time YOLO Object Detection via Java → Rust → Python</p>
+        
+        <div class="controls">
+            <button id="startBtn">▶ Start Streaming</button>
+            <button id="stopBtn" disabled>⏹ Stop</button>
+        </div>
+        
+        <div id="statusBox" class="status ready">Ready to start</div>
+        
+        <div class="stats">
+            <div class="stat-box fps">
+                <div class="stat-value fps" id="fpsValue">0.0</div>
+                <div class="stat-label">FPS (Frames/sec)</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value latency" id="latencyValue">0</div>
+                <div class="stat-label">Latency (ms)</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-value latency" id="frameCount">0</div>
+                <div class="stat-label">Frames Processed</div>
+            </div>
+        </div>
+        
+        <div class="video-container">
+            <div class="video-box">
+                <h3>📷 Webcam Input</h3>
+                <video id="webcam" autoplay playsinline muted></video>
+            </div>
+            <div class="video-box">
+                <h3>🔍 YOLO Detection Output</h3>
+                <img id="output" alt="Processed frame will appear here">
+            </div>
+        </div>
+        
+        <canvas id="captureCanvas"></canvas>
+        
+        <div class="footer">
+            JPyRust - Zero-Copy Java ↔ Python Bridge via Rust | Phase 3: Video Streaming
+        </div>
+    </div>
+
+    <script>
+        // DOM Elements
+        const webcam = document.getElementById('webcam');
+        const output = document.getElementById('output');
+        const canvas = document.getElementById('captureCanvas');
+        const ctx = canvas.getContext('2d');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const statusBox = document.getElementById('statusBox');
+        const fpsValue = document.getElementById('fpsValue');
+        const latencyValue = document.getElementById('latencyValue');
+        const frameCountEl = document.getElementById('frameCount');
+
+        // State
+        let isStreaming = false;
+        let frameCount = 0;
+        let fpsStartTime = 0;
+        let stream = null;
+
+        // Settings
+        const VIDEO_WIDTH = 640;
+        const VIDEO_HEIGHT = 480;
+        const JPEG_QUALITY = 0.7;
+        const API_ENDPOINT = '/api/ai/process-image';
+
+        // Initialize webcam
+        async function initWebcam() {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: { ideal: VIDEO_WIDTH },
+                        height: { ideal: VIDEO_HEIGHT },
+                        facingMode: 'user'
+                    },
+                    audio: false
+                });
+                
+                webcam.srcObject = stream;
+                await webcam.play();
+                
+                // Set canvas size to match video
+                canvas.width = VIDEO_WIDTH;
+                canvas.height = VIDEO_HEIGHT;
+                
+                setStatus('Webcam ready. Click Start to begin streaming.', 'ready');
+                return true;
+            } catch (err) {
+                console.error('Webcam error:', err);
+                setStatus(`Webcam error: ${err.message}`, 'error');
+                return false;
+            }
+        }
+
+        // Capture frame from webcam
+        function captureFrame() {
+            ctx.drawImage(webcam, 0, 0, VIDEO_WIDTH, VIDEO_HEIGHT);
+            return new Promise(resolve => {
+                canvas.toBlob(resolve, 'image/jpeg', JPEG_QUALITY);
+            });
+        }
+
+        // Send frame to server and get annotated result
+        async function processFrame(blob) {
+            const formData = new FormData();
+            formData.append('file', blob, 'frame.jpg');
+
+            const response = await fetch(API_ENDPOINT, {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!response.ok) {
+                throw new Error(`Server error: ${response.status}`);
+            }
+
+            return await response.blob();
+        }
+
+        // Main streaming loop
+        async function streamingLoop() {
+            if (!isStreaming) return;
+
+            const startTime = performance.now();
+
+            try {
+                // Capture frame
+                const frameBlob = await captureFrame();
+                
+                // Send to server and get result
+                const resultBlob = await processFrame(frameBlob);
+                
+                // Display result
+                const imageUrl = URL.createObjectURL(resultBlob);
+                output.onload = () => URL.revokeObjectURL(imageUrl);
+                output.src = imageUrl;
+
+                // Update stats
+                frameCount++;
+                const latency = Math.round(performance.now() - startTime);
+                latencyValue.textContent = latency;
+                frameCountEl.textContent = frameCount;
+
+                // Calculate FPS
+                const elapsed = (performance.now() - fpsStartTime) / 1000;
+                if (elapsed > 0) {
+                    const fps = frameCount / elapsed;
+                    fpsValue.textContent = fps.toFixed(1);
+                }
+
+                // Schedule next frame (only after current one completes)
+                if (isStreaming) {
+                    requestAnimationFrame(streamingLoop);
+                }
+            } catch (err) {
+                console.error('Stream error:', err);
+                setStatus(`Error: ${err.message}`, 'error');
+                // Try to continue despite errors
+                if (isStreaming) {
+                    setTimeout(streamingLoop, 1000);
+                }
+            }
+        }
+
+        // Start streaming
+        async function startStreaming() {
+            if (isStreaming) return;
+
+            // Initialize webcam if needed
+            if (!stream) {
+                const success = await initWebcam();
+                if (!success) return;
+            }
+
+            isStreaming = true;
+            frameCount = 0;
+            fpsStartTime = performance.now();
+            
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+            setStatus('🔴 Streaming... Processing frames in real-time', 'streaming');
+
+            // Start the loop
+            streamingLoop();
+        }
+
+        // Stop streaming
+        function stopStreaming() {
+            isStreaming = false;
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            setStatus('Stopped. Click Start to resume.', 'ready');
+        }
+
+        // Update status display
+        function setStatus(message, type) {
+            statusBox.textContent = message;
+            statusBox.className = `status ${type}`;
+        }
+
+        // Event listeners
+        startBtn.addEventListener('click', startStreaming);
+        stopBtn.addEventListener('click', stopStreaming);
+
+        // Initialize on page load
+        window.addEventListener('load', async () => {
+            setStatus('Initializing webcam...', 'ready');
+            await initWebcam();
+        });
+    </script>
+</body>
+</html>

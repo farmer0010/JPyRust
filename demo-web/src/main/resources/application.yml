@@ -1,7 +1,19 @@
 server:
   port: 8080
 
+# AI Worker Configuration
+app:
+  ai:
+    work-dir: C:/jpyrust_temp
+    source-script-dir: d:/JPyRust/python-core
+
 logging:
   level:
     root: INFO
     com.jpyrust: DEBUG
+
+spring:
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 20MB

@@ -1,141 +1,217 @@
 package com.jpyrust;
 
+import java.io.BufferedReader;
 import java.io.File;
-import java.io.PrintWriter;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.InputStreamReader;
+import java.nio.ByteBuffer;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 
 public class JPyRustBridge {
-    // 1. Native Method 선언
-    public native String hello();
 
-    public native void initPython(String pythonHome);
+    // Configurable paths - set via initialize()
+    private static String workDir = "C:/jpyrust_temp"; // Default fallback
+    private static String sourceScriptDir = "d:/JPyRust/python-core"; // Default fallback
 
-    public native String runPythonAI(String input, int number);
+    private static final int HEADER_SIZE = 4; // 4 bytes for length
+    private static boolean initialized = false;
 
-    public native String runPythonRaw(java.nio.ByteBuffer data, int length, int width, int height, int channels);
-
-    // 2. 초기화 상태 플래그
-    private static boolean isInitialized = false;
+    // Static native library loading
+    static {
+        try {
+            System.loadLibrary("jpyrust_bridge");
+            System.out.println("[JPyRustBridge] Native library loaded successfully");
+        } catch (UnsatisfiedLinkError e) {
+            System.err.println("[JPyRustBridge] Failed to load native library: " + e.getMessage());
+        }
+    }
 
     /**
-     * 외부에서 호출 가능한 초기화 메서드 (Zero-Config)
-     * Spring Boot 등 서버 시작 시 호출 권장
+     * Initialize with configurable paths from application.properties/yml
      */
-    public synchronized static void init() {
-        if (isInitialized) {
-            System.out.println("[JPyRust] Already initialized.");
+    public synchronized static void initialize(String workDirectory, String sourceScript) {
+        if (initialized) {
             return;
         }
 
+        workDir = workDirectory;
+        sourceScriptDir = sourceScript;
+
+        System.out.println("=== JPyRust IPC Initialization ===");
+        System.out.println("[Init] Work Directory: " + workDir);
+        System.out.println("[Init] Source Script Dir: " + sourceScriptDir);
+
         try {
-            System.out.println("=== JPyRust Zero-Config Initialization ===");
+            // Ensure work directory exists
+            File tempDir = new File(workDir);
+            if (!tempDir.exists()) {
+                tempDir.mkdirs();
+                System.out.println("[Init] Created work directory: " + workDir);
+            }
 
-            // [Step 1] Python Runtime 추출 (from resources/python_dist.zip)
-            // [Init] Extracting Python Runtime...
-            java.nio.file.Path pythonHome;
-            String os = System.getProperty("os.name").toLowerCase();
-            if (os.contains("win")) {
-                // Windows: Use fixed ASCII path to avoid encoding issues with usernames
-                pythonHome = java.nio.file.Paths.get("C:/jpyrust_temp");
-                System.out.println("[Init] Windows detected. Forcing extraction to: " + pythonHome.toAbsolutePath());
-                NativeLoader.extractZip("/python_dist.zip", pythonHome);
+            // Copy ai_worker.py from source to work location
+            Path sourceScript2 = Paths.get(sourceScriptDir, "ai_worker.py");
+            Path targetScript = Paths.get(workDir, "ai_worker.py");
+
+            if (Files.exists(sourceScript2)) {
+                Files.copy(sourceScript2, targetScript, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                System.out.println("[Init] Copied ai_worker.py to " + targetScript);
             } else {
-                // Non-Windows: Use default temp directory
-                pythonHome = NativeLoader.extractZip("/python_dist.zip", "jpyrust_python_");
-            }
-            System.out.println("[Init] Python extracted to: " + pythonHome.toAbsolutePath());
-
-            // [Patch] ._pth deletion removed. Path configuration moved to Rust bridge.
-
-            // [Debug] 파일 목록 및 존재 여부 확인 -> 파일로 작성 (Optional)
-            File debugFile = new File("debug_listing.txt");
-            try (PrintWriter pw = new PrintWriter(debugFile)) {
-                pw.println("Extracted Path: " + pythonHome.toAbsolutePath());
-                File[] files = pythonHome.toFile().listFiles();
-                if (files != null) {
-                    pw.println("Files count: " + files.length);
-                }
-                pw.println("ai_worker.py exists? " + pythonHome.resolve("ai_worker.py").toFile().exists());
-                pw.println("python3.dll exists? " + pythonHome.resolve("python3.dll").toFile().exists());
-            } catch (Exception e) {
-                // Ignore debug file write error
+                System.err.println("[Warning] Source python script not found at " + sourceScript2);
             }
 
-            // [Step 2] Python DLL 미리 로드 (의존성 해결)
-            try {
-                // python3.dll은 종종 필수적인 redirection DLL임
-                System.load(pythonHome.resolve("python3.dll").toAbsolutePath().toString());
-                // 실제 버전별 DLL (예: python310.dll)
-                // 버전 바뀌면 수정 필요. 현재 3.10.11
-                System.load(pythonHome.resolve("python310.dll").toAbsolutePath().toString());
-                System.out.println("[Init] Python DLLs loaded successfully.");
-            } catch (UnsatisfiedLinkError | Exception e) {
-                System.err.println("[Warning] Failed to load Python DLLs explicitly. " + e.getMessage());
-            }
+            // Also initialize the native Rust side
+            initNative(workDir, sourceScriptDir);
 
-            // [Step 3] Rust Bridge 로드
-            System.out.println("[Init] Loading Rust Bridge...");
-            NativeLoader.load("rust_bridge");
-
-            // [Step 4] Rust 측 초기화 (PYTHONHOME 등 설정)
-            // 인스턴스를 하나 만들어서 호출 (native initPython은 인스턴스 메서드)
-            JPyRustBridge bridge = new JPyRustBridge();
-            bridge.initPython(pythonHome.toAbsolutePath().toString());
-            System.out.println("[Init] Rust Bridge Initialized.\n");
-
-            isInitialized = true;
             System.out.println("=== Initialization Complete ===");
+            initialized = true;
 
         } catch (Exception e) {
-            System.err.println("\n[FATAL] Initialization failed.");
             e.printStackTrace();
-            throw new RuntimeException("JPyRust initialization failed", e);
         }
     }
 
     /**
-     * 벤치마크: Zero-Copy vs (Implicit JSON/String Copy)
+     * Legacy initialize method (uses defaults)
      */
-    public void benchmarkRaw() {
-        System.out.println("\n=== Zero-Copy Benchmark ===");
-        int size = 1024 * 1024 * 10; // 10MB
-        java.nio.ByteBuffer buffer = java.nio.ByteBuffer.allocateDirect(size);
-
-        // Fill buffer with some data
-        for (int i = 0; i < 100; i++) {
-            buffer.put(i, (byte) i);
-        }
-
-        long start = System.nanoTime();
-        String result = runPythonRaw(buffer, size, 0, 0, 0);
-        long end = System.nanoTime();
-
-        System.out.println("Result: " + result);
-        System.out.println("Time taken (10MB): " + (end - start) / 1_000_000.0 + " ms");
+    public synchronized static void initialize() {
+        initialize(workDir, sourceScriptDir);
     }
 
-    // 3. 메인 함수 (테스트 & 실행 진입점)
-    public static void main(String[] args) {
-        // 초기화 호출
-        init();
+    /**
+     * Native initialization method
+     */
+    private static native void initNative(String workDir, String sourceScriptDir);
+
+    /**
+     * Process image via Rust bridge with configurable work directory
+     */
+    public byte[] processImage(String workDirectory, ByteBuffer data, int length, int width, int height, int channels) {
+        return runPythonProcess(workDirectory, data, length, width, height, channels);
+    }
+
+    /**
+     * Legacy processImage method (uses default workDir)
+     */
+    public byte[] processImage(ByteBuffer data, int length, int width, int height, int channels) {
+        return runPythonProcess(workDir, data, length, width, height, channels);
+    }
+
+    /**
+     * Native method - now accepts workDir parameter
+     */
+    private native byte[] runPythonProcess(String workDir, ByteBuffer data, int length, int width, int height,
+            int channels);
+
+    /**
+     * Split File IPC Strategy (Pure Java fallback - kept for reference):
+     * 1. Write to input_image.dat
+     * 2. Python reads input, writes to output_image.dat
+     * 3. Java reads from output_image.dat (fresh file, no cache)
+     */
+    public String runPythonRaw(ByteBuffer data, int length, int width, int height, int channels) {
+        String inputFilePath = workDir + "/input_image.dat";
+        String outputFilePath = workDir + "/output_image.dat";
+        String pythonScriptPath = workDir + "/ai_worker.py";
+
+        System.out.println("[JPyRust] Writing to INPUT file...");
 
         try {
-            JPyRustBridge bridge = new JPyRustBridge();
+            // 1. Write to INPUT file
+            byte[] inputBuffer = new byte[length];
+            data.position(0);
+            data.get(inputBuffer);
 
-            // [Step 5] 동작 테스트
-            System.out.println("Java: Rust hello() 호출...");
-            System.out.println("Rust: " + bridge.hello());
+            try (FileOutputStream fos = new FileOutputStream(inputFilePath)) {
+                // Write 4-byte length header (Big Endian)
+                fos.write((length >> 24) & 0xFF);
+                fos.write((length >> 16) & 0xFF);
+                fos.write((length >> 8) & 0xFF);
+                fos.write(length & 0xFF);
+                // Write pixel data
+                fos.write(inputBuffer);
+                fos.flush();
+            }
 
-            System.out.println("\nJava: Python AI Worker 호출...");
-            String aiResult = bridge.runPythonAI("Antigravity Desert Test", 99);
-            System.out.println("Python: " + aiResult);
+            System.out.println("[JPyRust] Input written: " + length + " bytes. Spawning Python...");
 
-            // [Step 6] Zero-Copy 벤치마크
-            bridge.benchmarkRaw();
+            // 2. Delete output file if exists (ensure fresh read)
+            File outputFile = new File(outputFilePath);
+            if (outputFile.exists()) {
+                outputFile.delete();
+            }
 
-            System.out.println("\n=== Success ===");
+            // 3. Spawn Python Process
+            ProcessBuilder pb = new ProcessBuilder(
+                    "python",
+                    pythonScriptPath,
+                    String.valueOf(width),
+                    String.valueOf(height),
+                    String.valueOf(channels));
+
+            pb.redirectErrorStream(true);
+            Process process = pb.start();
+
+            // 4. Read Python Output
+            StringBuilder output = new StringBuilder();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    output.append(line).append("\n");
+                    System.out.println("[Python STDOUT] " + line);
+                }
+            }
+
+            int exitCode = process.waitFor();
+            System.out.println("[JPyRust] Python exited with code: " + exitCode);
+
+            // 5. Read from OUTPUT file (completely fresh, no cache!)
+            System.out.println("[JPyRust] Reading from OUTPUT file...");
+
+            if (!outputFile.exists()) {
+                System.err.println("[JPyRust] ERROR: Output file not found!");
+                return "Error: Python did not create output file";
+            }
+
+            byte[] outputBuffer;
+            try (FileInputStream fis = new FileInputStream(outputFilePath)) {
+                // Read 4-byte length header
+                int b1 = fis.read();
+                int b2 = fis.read();
+                int b3 = fis.read();
+                int b4 = fis.read();
+                int outputLength = (b1 << 24) | (b2 << 16) | (b3 << 8) | b4;
+
+                System.out.println("[JPyRust] Output file header says: " + outputLength + " bytes");
+
+                // Read pixel data
+                outputBuffer = new byte[outputLength];
+                int totalRead = 0;
+                while (totalRead < outputLength) {
+                    int read = fis.read(outputBuffer, totalRead, outputLength - totalRead);
+                    if (read == -1)
+                        break;
+                    totalRead += read;
+                }
+
+                System.out.println("[JPyRust] Actually read: " + totalRead + " bytes");
+            }
+
+            // 6. Write back to original ByteBuffer
+            data.position(0);
+            data.put(outputBuffer);
+            data.flip();
+
+            System.out.println("[JPyRust] Data copied back to ByteBuffer successfully!");
+
+            return output.toString().trim();
 
         } catch (Exception e) {
             e.printStackTrace();
+            return "Error interacting with Python: " + e.getMessage();
         }
     }
 }

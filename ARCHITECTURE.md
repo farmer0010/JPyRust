@@ -1,38 +1,138 @@
 # JPyRust Architecture & Guidelines
 
 ## 1. Project Vision
-**JPyRust**는 Java 애플리케이션에서 Python AI 생태계를 **Zero-Config**로 사용할 수 있게 해주는 고성능 브릿지 라이브러리입니다.
-최종 사용자는 Python이나 Rust 컴파일러를 설치할 필요 없이, 오직 **JAR 파일 하나**만 추가하여 기능을 사용해야 합니다.
 
-## 2. Core Architecture Layers
-[Java App] -> (JNI) -> [Rust Bridge] -> (PyO3) -> [Embedded Python Interpreter]
+**JPyRust** is a high-performance bridge library enabling Java applications to use the Python AI ecosystem with **Production-Grade Performance**.
+
+The system achieves **778x speedup** (7s → 9ms) through:
+- **Daemon Mode**: Python stays warm with models pre-loaded
+- **UUID Isolation**: Thread-safe concurrent request handling
+- **Task Dispatching**: Multiple AI tasks via single daemon
+
+---
+
+## 2. Core Architecture (v2.0 - Universal Bridge)
+
+```
+[Java App] -> (JNI) -> [Rust Bridge] -> (stdin/stdout) -> [Python Daemon]
+                              |
+                       File-based IPC
+                    input_{uuid}.dat
+                    output_{uuid}.dat
+```
 
 ### Layer 1: Java API (User-Facing)
-- **Role**: 사용자 친화적인 인터페이스 제공, Native Library 로딩 관리.
-- **Principle**:
-    - `NativeLoader`: OS/Arch를 자동 감지하여 JAR 내부의 `.dll`, `.so`를 임시 폴더로 추출 및 로드.
-    - **Exception Handling**: Rust/Python 계층의 에러를 Java Exception으로 변환하여 던짐 (JVM Crash 절대 금지).
+- **Controllers**: `AIImageController`, `AITextController`
+- **Bridge**: `JPyRustBridge.java` with `executeTask()` native method
+- **Config**: `application.yml` for paths and settings
 
-### Layer 2: Rust Bridge (The Safety Valve)
-- **Role**: JVM과 Python VM 사이의 중재자.
-- **Tech Stack**: `jni-rs`, `pyo3`.
-- **Principle**:
-    - **Memory Safety**: JNI 포인터 오용 방지.
-    - **GIL Management**: Python 호출 시 GIL 획득/해제 로직을 명시적으로 관리하여 Deadlock 방지.
-    - **Panic Free**: Rust의 Panic이 JNI 경계를 넘어 JVM을 종료시키지 않도록 `catch_unwind` 사용 필수.
+### Layer 2: Rust Bridge (Process Manager)
+- **Tech**: `jni-rs`, `lazy_static`
+- **Role**: Spawn and manage Python daemon lifecycle
+- **IPC**: stdin/stdout with `EXECUTE` protocol
+- **Resilience**: Auto-restart on daemon crash
 
-### Layer 3: Python Core (The Worker)
-- **Role**: 실제 AI/ML 로직 수행.
-- **Principle**:
-    - **Embedded**: 호스트 시스템의 Python이 아닌, Rust 바이너리에 내장되거나 격리된 Python 환경 사용.
-    - **Pure Logic**: I/O나 UI 로직 배제, 순수 데이터 처리 함수 위주 작성.
+### Layer 3: Python Daemon (AI Worker)
+- **File**: `ai_worker.py`
+- **Mode**: Persistent loop (not one-shot)
+- **Tasks**: YOLO (image), SENTIMENT (text)
+- **Models**: Loaded once at startup
 
-## 3. Build & Distribution Strategy
-- **Build System**: Gradle (Java) + Cargo (Rust).
-- **Artifact**: `jpyrust.jar` (내부에 플랫폼별 Native Binary 포함).
-- **Cross-Compilation**: CI 환경에서 Windows, Linux, macOS용 바이너리를 모두 빌드하여 JAR에 패키징.
+---
 
-## 4. Development Rules for Agents
-1. **No System Dependency**: 코드 작성 시 사용자의 로컬 환경(Python 경로 등)에 의존하는 하드코딩 금지.
-2. **Type Safety**: Java와 Rust 간 데이터 교환 시 JSON(Serde) 직렬화를 기본으로 하여 타입 불일치 방지.
-3. **Async Awareness**: Python의 긴 작업이 JVM 메인 스레드를 차단하지 않도록 설계.
+## 3. IPC Protocol
+
+### Command Format
+```
+EXECUTE <task_type> <request_id> <metadata...>
+```
+
+### Supported Tasks
+| Task | Metadata | Input File | Output File |
+|------|----------|------------|-------------|
+| YOLO | `width height channels` | Raw BGR bytes | JPEG bytes |
+| SENTIMENT | `NONE` | UTF-8 text | UTF-8 result |
+
+### Response Format
+```
+READY              # Initialization complete
+DONE <result>      # Success
+ERROR <message>    # Failure
+```
+
+---
+
+## 4. File-Based Data Transfer
+
+### Why Files Instead of stdin?
+- Binary data (images) is complex over stdin
+- UUID-named files enable concurrent safety
+- Easy debugging (files persist for inspection)
+
+### File Naming Convention
+```
+{work_dir}/input_{uuid}.dat   # Request data
+{work_dir}/output_{uuid}.dat  # Response data
+```
+
+### File Format
+```
+[4 bytes: length (big-endian)] [N bytes: data]
+```
+
+---
+
+## 5. Performance Characteristics
+
+| Metric | Value | Notes |
+|--------|-------|-------|
+| First Request | ~7s | Model loading (YOLO) |
+| Text Analysis | ~9ms | After warmup |
+| Image Detection | ~60-100ms | Includes resize + inference |
+| Memory (Daemon) | ~500MB | YOLO model in GPU/CPU |
+
+---
+
+## 6. Development Rules
+
+1. **UUID for Everything**: Never use fixed filenames
+2. **Cleanup After Use**: Delete temp files post-processing
+3. **Graceful Errors**: Return `ERROR` message, don't crash
+4. **Flush Always**: Use `flush=True` on Python prints
+5. **Timeout Protection**: 60s limit on daemon startup
+
+---
+
+## 7. Extension Guide
+
+### Adding a New Task
+
+1. **Python** (`ai_worker.py`):
+   ```python
+   def handle_newtask(request_id, metadata):
+       # Read input_{request_id}.dat
+       # Process
+       # Write output_{request_id}.dat
+       return "DONE result"
+   
+   TASK_HANDLERS["NEWTASK"] = handle_newtask
+   ```
+
+2. **Java** (`JPyRustBridge.java`):
+   ```java
+   public byte[] processNewTask(String input) {
+       return execute("NEWTASK", "NONE", input.getBytes());
+   }
+   ```
+
+3. **Controller**:
+   ```java
+   @PostMapping("/api/ai/newtask")
+   public ResponseEntity<String> newTask(@RequestBody String input) {
+       return ResponseEntity.ok(bridge.processNewTask(input));
+   }
+   ```
+
+---
+
+<p align="center"><i>Last updated: 2026-01-26 (v2.0 Universal Bridge)</i></p>

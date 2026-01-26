@@ -1,179 +1,267 @@
-# 🌉 JPyRust: Zero-Config Java-Python Bridge
+# 🚀 JPyRust: Universal Java-Python AI Bridge
 
-> "Stop asking users to install Python."
+> **"One Daemon. Multiple AI Tasks. Millisecond Latency."**
 
-[🇰🇷 Korean Version](README_KR.md)
+[![Java](https://img.shields.io/badge/Java-17+-orange?logo=openjdk)](https://openjdk.org/)
+[![Rust](https://img.shields.io/badge/Rust-1.70+-orange?logo=rust)](https://www.rust-lang.org/)
+[![Python](https://img.shields.io/badge/Python-3.10-blue?logo=python)](https://www.python.org/)
+[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+
+[🇰🇷 한국어 버전](README_KR.md)
 
 ---
 
-## 🏗️ System Architecture
-**Polyglot Runtime Environment**
-Java (Host), Rust (Bridge), and Python (Worker) operate within a single shared process memory.
+## ⚡ Performance at a Glance
+
+| Metric | Before (v1.x) | After (v2.0) | Improvement |
+|--------|:-------------:|:------------:|:-----------:|
+| **Text Analysis** | 7,000ms | **9ms** | 🔥 **778x faster** |
+| **Video Frame** | 7,000ms | **60-100ms** | 🔥 **70-116x faster** |
+| **First Request** | 7,000ms | 7,000ms | _(model loading)_ |
+| **Concurrency** | ❌ Race conditions | ✅ UUID isolation | Thread-safe |
+
+> The secret? **Daemon Mode** - Python stays warm with models pre-loaded in memory.
+
+---
+
+## 🎯 Supported AI Tasks
+
+| Task | Endpoint | Input | Output | Latency |
+|------|----------|-------|--------|---------|
+| 🔍 **Object Detection** | `POST /api/ai/process-image` | Image (JPEG/PNG) | JPEG with bounding boxes | ~60-100ms |
+| 💬 **Sentiment Analysis** | `POST /api/ai/text` | JSON `{"text": "..."}` | Sentiment result | ~9ms |
+| 🏥 **Health Check** | `GET /api/ai/health` | - | Status JSON | <1ms |
+
+---
+
+## 🏗️ Architecture
 
 ```mermaid
 graph TD
-    %% Client
-    Client(["User Client<br>Web Browser"]) -->|HTTP Request| SpringBoot["🍃 Spring Boot Server<br>(Java Host)"]
-%% JPyRust Area
-subgraph "JPyRust Library (In-Process)"
-    SpringBoot -->|"NativeLoader.load()"| Loader["📦 Native Loader<br>(Resource Extractor)"]
-    Loader -->|"Extract & Link"| RustBridge["🦀 Rust Bridge<br>(jni-rs + pyo3)"]
-    
-    RustBridge <-->|"FFI / Shared Memory"| PythonVM["🐍 Embedded Python 3.10<br>(Standalone Runtime)"]
-    
-    subgraph "AI Worker"
-        PythonVM -->|"Execute Script"| Logic["🧠 ai_worker.py<br>(PyTorch/NumPy)"]
+    subgraph "Client Layer"
+        Browser["🌐 Web Browser"]
+        API["📱 REST Client"]
     end
-end
-%% Data Flow
-Logic -->|"Result JSON"| RustBridge
-RustBridge -->|"JString"| SpringBoot
-SpringBoot -->|"HTTP Response"| Client
+
+    subgraph "Java Layer (Spring Boot)"
+        Controller["☕ AIImageController<br/>AITextController"]
+        Bridge["🔗 JPyRustBridge.java"]
+    end
+
+    subgraph "Rust Layer (JNI)"
+        JNI["🦀 lib.rs<br/>Process Manager"]
+    end
+
+    subgraph "Python Layer (Daemon)"
+        Daemon["🐍 ai_worker.py<br/>Persistent Process"]
+        YOLO["🔍 YOLOv8"]
+        NLP["💬 Sentiment"]
+    end
+
+    Browser --> Controller
+    API --> Controller
+    Controller --> Bridge
+    Bridge -->|"JNI Call"| JNI
+    JNI -->|"stdin: EXECUTE cmd"| Daemon
+    Daemon -->|"stdout: DONE/ERROR"| JNI
+    Daemon --> YOLO
+    Daemon --> NLP
+
+    style Daemon fill:#3776ab,color:#fff
+    style JNI fill:#dea584,color:#000
+    style Controller fill:#6db33f,color:#fff
 ```
 
-<br>
+### Key Design Decisions
 
-## 🚀 Key Features
-
-### 1. 📦 Zero-Config Deployment
-- **Standalone Runtime**: The end-user does not need Python installed. The JAR file contains an optimized **Python 3.10 Runtime (ZIP)**.
-- **Smart NativeLoader**: Detects the OS (Windows/Linux/Mac) at runtime, automatically extracts the necessary DLLs/SOs and Python runtime to a temporary directory, and links them dynamically.
-
-### 2. 🛡️ Memory Safety & Stability
-- **Rust Safety Valve**: Unlike C/C++ based JNI (e.g., JEP), Rust's ownership model prevents memory leaks and pointer errors (SegFaults) at the source.
-- **Signal Handling Protection**: Prevents the Python interpreter from hijacking the JVM's signal handlers (SIGINT, SIGSEGV) using low-level control (Py_InitializeEx), ensuring JVM stability.
-
-### 3. ⚡ High Performance
-- **No ProcessBuilder**: Avoids slow process forking (ProcessBuilder) or HTTP overhead. It uses **JNI (Java Native Interface)** to share memory space.
-- **GIL Management**: Explicitly manages the Python GIL (Global Interpreter Lock) acquisition/release at the Rust level, ensuring deadlock-free concurrency even in multi-threaded environments like Spring Boot.
-
-### 4. ⚡ Zero-Copy Shared Memory
-- **Direct ByteBuffer**: Java's off-heap memory is directly shared with Rust and Python without copying. (Theoretical transfer speed tends to 0ms)
-- **In-Place Modification**: Python (`numpy`/`cv2`) directly modifies image data in Java memory. Completely eliminates serialization overhead for large AI model inference.
-
-### 5. 🛠️ Development Experience
-- **Dependency Automation**: Simply list packages in `requirements.txt`. The Gradle build automatically handles `pip install` and embeds them into the JAR.
-- **CI/CD Pipeline**: GitHub Actions automatically cross-builds and deploys native libraries for Windows, Linux, and macOS.
-
-## 📂 Project Structure
-**Multi-Module Polyglot Project**
-Organically combines Java, Rust, Python, and Web code.
-
-```plaintext
-.
-├── architecture.md             # [Doc] Architecture Design Document
-├── docker-compose.yml          # [Infra] Docker Deployment Config
-├── Dockerfile                  # [Infra] Multi-stage Build Script
-├── settings.gradle.kts         # [Gradle] Multi-module Settings
-├── requirements.txt            # [Config] Python Dependencies
-├── java-api                    # [Module] Java Library (Core)
-│   ├── src/main/java
-│   │   └── com/jpyrust
-│   │       ├── NativeLoader.java   # [Core] Auto-extractor for DLLs & Python Runtime
-│   │       └── JPyRustBridge.java  # [API] User-facing Native Interface
-│   └── src/main/resources
-│       └── python_dist         # [Res] Embedded Python Runtime (Zip on build)
-├── rust-bridge                 # [Module] Rust JNI Implementation
-│   ├── Cargo.toml              # [Rust] Dependencies (jni, pyo3)
-│   └── src
-│       └── lib.rs              # [Code] JNI Functions & Python VM Control Logic
-├── python-core                 # [Module] AI/ML Logic
-│   └── ai_worker.py            # [Code] Python script performing actual logic
-└── demo-web                    # [Module] Spring Boot Demo Server
-    └── src/main/java/.../AIImageController.java # Zero-Copy API Endpoint
-```
-
-## 🔄 Logic Flow
-The process flow from a Web Request -> Java -> Rust -> Python AI execution.
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor User as 👤 User
-    participant Boot as 🍃 Spring Boot
-    participant Loader as 📦 NativeLoader
-    participant Rust as 🦀 Rust Bridge
-    participant Py as 🐍 Python VM
-%% Initialization Phase
-Note over Boot, Py: 1. Initialization (Application Start)
-Boot->>Loader: JPyRustBridge.init()
-activate Loader
-Loader->>Loader: Detect OS & Extract Resources (Temp Dir)
-Loader->>Rust: System.load(rust_bridge.dll)
-activate Rust
-Rust->>Py: Py_InitializeEx(0) (Signal Protection)
-Rust->>Py: Windows DLL Path Patch
-deactivate Rust
-deactivate Loader
-%% Execution Phase (Zero-Copy)
-Note over Boot, Py: 2. Zero-Copy Request (Image Processing)
-User->>Boot: POST /api/ai/process-image (Image)
-activate Boot
-Boot->>Boot: DirectByteBuffer.allocate()
-Boot->>Rust: runPythonRaw(Buffer Pointer)
-activate Rust
-Rust->>Py: PyMemoryView_FromMemory(Ptr)
-activate Py
-Py->>Py: numpy.frombuffer() -> In-Place Edit
-Py-->>Rust: Return
-deactivate Py
-Rust-->>Boot: Return
-deactivate Rust
-Boot-->>User: Processed Image (PNG)
-deactivate Boot
-```
-
-## 📜 Version History
-
-| Version | Stage | Key Achievement |
-| :--- | :--- | :--- |
-| **v0.1** | PoC | Established basic Java-Rust-Python communication pipeline (JNI Pipeline). |
-| **v0.2** | Zero-Config | Implemented NativeLoader. Removed `-Djava.library.path` requirement. |
-| **v0.3** | Desert Mode | Embedded Standalone Python(3.10). Enabled offline execution without local Python installation. |
-| **v0.4** | Safety Patch | Patched SIGINT conflicts and fixed Windows DLL path issues. |
-| **v1.0** | Release | Integrated with Spring Boot and added Docker multi-stage build support. |
-| **v1.1** | Optimization | Implemented Zero-Copy Shared Memory & Image Processing Demo. |
-| **v1.2** | Automation | Gradle-based Python Dependency Automation & GitHub Actions CI/CD. |
+| Component | Technology | Why |
+|-----------|------------|-----|
+| **IPC** | stdin/stdout | Simple, debuggable, no sockets |
+| **File Transfer** | `input_{uuid}.dat` | Concurrent-safe via UUID isolation |
+| **Model Loading** | Once at startup | Eliminates 6s overhead per request |
+| **Output Format** | JPEG (Python-encoded) | No Java re-encoding needed |
 
 ---
 
-## ⚙️ Setup & Run
+## 📡 IPC Protocol
 
-### 1. Prerequisites
+The Rust bridge communicates with Python via a simple text protocol:
+
+```plaintext
+# Command Format
+EXECUTE <task_type> <request_id> <metadata...>
+
+# Examples
+EXECUTE YOLO a1b2c3d4-e5f6-7890-abcd-ef1234567890 640 480 3
+EXECUTE SENTIMENT b2c3d4e5-f6a7-8901-bcde-f12345678901 NONE
+
+# Responses
+READY              # Daemon is initialized
+DONE 5             # Success (5 objects detected)
+ERROR <message>    # Failure
+```
+
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
 - Java 17+ (JDK)
-- Rust (Cargo, only required for building from source)
-- Docker (for containerized execution)
+- Rust (Cargo) - for building the native bridge
+- Python 3.10+ with pip
 
-### 2. Run with Gradle (Local)
+### 1. Clone & Build
 
 ```bash
-# 1. Build Rust Library (Release Mode)
+# Clone the repository
+git clone https://github.com/your-org/JPyRust.git
+cd JPyRust
+
+# Build Rust bridge
 cd rust-bridge
 cargo build --release
+cd ..
 
-# 2. Copy Resources (Can be automated)
-# (Skip if dll/so is already in the natives folder)
+# Install Python dependencies
+pip install ultralytics opencv-python numpy
 
-# 3. Run Spring Boot Demo
-cd ../demo-web
-./gradlew bootRun
+# Build Java application
+./gradlew :demo-web:bootJar
 ```
-  * Chat API: `http://localhost:8080/api/ai/chat?message=HelloJPyRust&id=1`
 
-### 3. Run with Docker (Recommended)
-Use Docker to test in a clean environment without Python or Rust installed.
+### 2. Configure
+
+Edit `demo-web/src/main/resources/application.yml`:
+```yaml
+app:
+  ai:
+    work-dir: C:/jpyrust_temp        # Temp file directory
+    source-script-dir: d:/JPyRust/python-core  # Python scripts
+```
+
+### 3. Run
 
 ```bash
-# Build & Run Docker Image
-docker build -t jpyrust-demo .
-docker run -p 8080:8080 jpyrust-demo
+java -jar demo-web/build/libs/demo-web-0.0.1-SNAPSHOT.jar
 ```
 
-### 4. Zero-Copy Image Processing Demo
-Experience the Zero-Copy performance directly in your web browser.
+### 4. Test the APIs
 
-1. Run Server: `./gradlew bootRun`
-2. Access: `http://localhost:8080`
-3. Features:
-   - Image upload and real-time grayscale/process
-   - **Zero-Copy Processing Time** visible in console logs
+```bash
+# Health Check
+curl http://localhost:8080/api/ai/health
+
+# Object Detection (Image)
+curl -X POST -F "file=@test.jpg" http://localhost:8080/api/ai/process-image -o result.jpg
+
+# Sentiment Analysis (Text)
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"text":"This product is amazing!"}' \
+  http://localhost:8080/api/ai/text
+
+# Response: {"sentiment":"POSITIVE (confidence: 0.60)","input_length":25,"processing_time_ms":9}
+```
+
+### 5. Real-time Video Demo
+
+Open your browser: `http://localhost:8080/video.html`
+
+- 📷 Webcam-based object detection
+- 📊 Live FPS counter
+- 🎯 2-5 FPS with YOLOv8 on CPU
+
+---
+
+## 📂 Project Structure
+
+```plaintext
+JPyRust/
+├── demo-web/                    # Spring Boot Application
+│   └── src/main/java/com/jpyrust/
+│       ├── demo/
+│       │   ├── AIImageController.java   # Image processing endpoint
+│       │   └── AITextController.java    # Text analysis endpoint
+│       └── JPyRustBridge.java           # JNI bridge interface
+├── rust-bridge/                 # Rust JNI Implementation
+│   └── src/lib.rs               # Daemon manager & IPC handler
+├── python-core/                 # Python AI Workers
+│   └── ai_worker.py             # Universal daemon with task dispatching
+├── application.yml              # Configuration
+└── README.md                    # You are here!
+```
+
+---
+
+## 📜 Version History
+
+| Version | Milestone | Key Achievement |
+|---------|-----------|-----------------|
+| **v0.1** | PoC | Basic Java-Rust-Python JNI pipeline |
+| **v0.2** | Zero-Config | NativeLoader for auto DLL extraction |
+| **v0.3** | Standalone | Embedded Python 3.10 runtime |
+| **v1.0** | Release | Spring Boot + Docker support |
+| **v1.1** | Zero-Copy | Shared memory image processing |
+| **v2.0** | **Universal Bridge** | 🎉 Daemon mode, Multi-task, UUID isolation, 778x speedup |
+
+---
+
+## 🔧 Troubleshooting
+
+### ❌ Python path not found
+```
+Error: Failed to spawn Python daemon: The system cannot find the file specified
+```
+**Solution:** Ensure `python.exe` is in your work directory or update `work-dir` in `application.yml`.
+
+### ❌ Port 8080 already in use
+```
+Web server failed to start. Port 8080 was already in use.
+```
+**Solution:** Kill the existing process or change the port:
+```bash
+# Windows
+netstat -ano | findstr :8080
+taskkill /PID <pid> /F
+
+# Or change port in application.yml
+server:
+  port: 8081
+```
+
+### ❌ Webcam permission denied
+```
+NotAllowedError: Permission denied
+```
+**Solution:** 
+1. Use HTTPS (localhost is usually allowed)
+2. Check browser permissions for camera access
+3. Ensure no other app is using the webcam
+
+### ❌ YOLO model not found
+```
+Error: yolov8n.pt not found
+```
+**Solution:** The model auto-downloads on first run. Ensure internet access or manually place `yolov8n.pt` in the work directory.
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/amazing-feature`
+3. Commit changes: `git commit -m 'Add amazing feature'`
+4. Push to branch: `git push origin feature/amazing-feature`
+5. Open a Pull Request
+
+---
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+<p align="center">
+  <b>Built with ☕ Java + 🦀 Rust + 🐍 Python</b><br>
+  <i>The unholy trinity of performance.</i>
+</p>

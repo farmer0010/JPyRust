@@ -1,27 +1,100 @@
+# ================================================
+# JPyRust .gitignore - Security & Clean Repository
+# ================================================
+
+# =====================
 # Rust
+# =====================
 target/
 **/*.rs.bk
+Cargo.lock
 
+# =====================
 # Java / Gradle
+# =====================
 .gradle/
 build/
 out/
+bin/
 .idea/
 *.iml
 *.class
-*.log
+*.jar
+*.war
 .classpath
 .project
 .settings/
+BOOT-INF/
 
+# =====================
 # Python
+# =====================
 __pycache__/
 *.py[cod]
+*$py.class
 .venv/
 venv/
 env/
+*.egg-info/
+dist/
+.eggs/
 
+# =====================
+# AI Models (Large Files)
+# =====================
+*.pt
+*.pth
+*.onnx
+*.h5
+*.pb
+*.tflite
+*.safetensors
+
+# =====================
+# Temporary & Debug Files
+# =====================
+*.log
+*_log.txt
+*_error.txt
+error_log.txt
+build_error.txt
+debug_listing.txt
+execution_log.txt
+
+# =====================
+# Work Directory Files
+# =====================
+jpyrust_temp/
+input_*.dat
+output_*.dat
+
+# =====================
 # OS / IDE
+# =====================
 Thumbs.db
 .DS_Store
 .vscode/
+*.swp
+*.swo
+*~
+
+# =====================
+# Secrets & Config (Security)
+# =====================
+.env
+.env.local
+*.pem
+*.key
+*.crt
+secrets.yml
+application-local.yml
+application-prod.yml
+
+# =====================
+# Test Artifacts
+# =====================
+test-output/
+*.test.jpg
+*.test.png
+result.jpg
+result.png

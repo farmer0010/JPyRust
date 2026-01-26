@@ -1,0 +1,6 @@
+rootProject.name = 'JPyRust'
+include("demo-web")
+include("java-api")
+include("rust-bridge")
+// include("python-core") // python-core usually isn't a gradle project but let's see. 
+// For now mostly demo-web is crucial.
