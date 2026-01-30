@@ -14,7 +14,7 @@ public class DemoApplication {
 
     @PostConstruct
     public void init() {
-        // Initialize JPyRust Library on Startup
+
         System.out.println("Initializing JPyRust...");
         JPyRustBridge.initialize();
     }

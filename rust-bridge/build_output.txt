@@ -1,0 +1,52 @@
+   Compiling jpyrust v0.1.0 (D:\JPyRust\rust-bridge)
+error[E0277]: the trait bound `&JObject<'_>: From<JString<'_>>` is not satisfied
+  --> src\lib.rs:67:37
+   |
+67 |         &[JValue::Object(level_jstr.into()), JValue::Object(msg_jstr.into())],
+   |                                     ^^^^ the trait `From<JString<'_>>` is not implemented for `&JObject<'_>`
+   |
+   = help: the following other types implement trait `From<T>`:
+             `JObject<'_>` implements `From<JByteBuffer<'_>>`
+             `JObject<'_>` implements `From<JClass<'_>>`
+             `JObject<'_>` implements `From<JObjectArray<'_>>`
+             `JObject<'_>` implements `From<JPrimitiveArray<'_, T>>`
+             `JObject<'_>` implements `From<JString<'_>>`
+             `JObject<'_>` implements `From<JThrowable<'_>>`
+   = note: required for `JString<'_>` to implement `Into<&JObject<'_>>`
+
+error[E0277]: the trait bound `&JObject<'_>: From<JString<'_>>` is not satisfied
+  --> src\lib.rs:67:70
+   |
+67 |         &[JValue::Object(level_jstr.into()), JValue::Object(msg_jstr.into())],
+   |                                                                      ^^^^ the trait `From<JString<'_>>` is not implemented for `&JObject<'_>`
+   |
+   = help: the following other types implement trait `From<T>`:
+             `JObject<'_>` implements `From<JByteBuffer<'_>>`
+             `JObject<'_>` implements `From<JClass<'_>>`
+             `JObject<'_>` implements `From<JObjectArray<'_>>`
+             `JObject<'_>` implements `From<JPrimitiveArray<'_, T>>`
+             `JObject<'_>` implements `From<JString<'_>>`
+             `JObject<'_>` implements `From<JThrowable<'_>>`
+   = note: required for `JString<'_>` to implement `Into<&JObject<'_>>`
+
+warning: unused variable: `output_data`
+   --> src\lib.rs:467:9
+    |
+467 |     let output_data = match read_data_file(&output_file) {
+    |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_output_data`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: variable does not need to be mutable
+   --> src\lib.rs:490:5
+    |
+490 |     mut env: JNIEnv<'local>,
+    |     ----^^^
+    |     |
+    |     help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` on by default
+
+For more information about this error, try `rustc --explain E0277`.
+warning: `jpyrust` (lib) generated 2 warnings
+error: could not compile `jpyrust` (lib) due to 2 previous errors; 2 warnings emitted

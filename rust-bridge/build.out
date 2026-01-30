@@ -1,0 +1,54 @@
+   Compiling jpyrust v0.1.0 (D:\JPyRust\rust-bridge)
+warning: unused import: `JValue`
+ --> src\lib.rs:3:50
+  |
+3 | use jni::objects::{JClass, JByteBuffer, JString, JValue, GlobalRef};
+  |                                                  ^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+error[E0277]: the trait bound `JString<'_>: Into<_>` is not satisfied
+  --> src\lib.rs:93:19
+   |
+93 |         &[level_j.into(), msg_j.into()],
+   |                   ^^^^ the trait `Into<_>` is not implemented for `JString<'_>`
+   |
+   = note: required for `JString<'_>` to implement `Into<JValueGen<&JObject<'_>>>`
+help: consider borrowing here
+   |
+93 |         &[(&level_j).into(), msg_j.into()],
+   |           ++       +
+
+error[E0277]: the trait bound `JString<'_>: Into<_>` is not satisfied
+  --> src\lib.rs:93:33
+   |
+93 |         &[level_j.into(), msg_j.into()],
+   |                                 ^^^^ the trait `Into<_>` is not implemented for `JString<'_>`
+   |
+   = note: required for `JString<'_>` to implement `Into<JValueGen<&JObject<'_>>>`
+help: consider borrowing here
+   |
+93 |         &[level_j.into(), (&msg_j).into()],
+   |                           ++     +
+
+warning: variable does not need to be mutable
+   --> src\lib.rs:463:5
+    |
+463 |     mut env: JNIEnv,
+    |     ----^^^
+    |     |
+    |     help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` on by default
+
+warning: variable does not need to be mutable
+   --> src\lib.rs:542:5
+    |
+542 |     mut env: JNIEnv<'local>,
+    |     ----^^^
+    |     |
+    |     help: remove this `mut`
+
+For more information about this error, try `rustc --explain E0277`.
+warning: `jpyrust` (lib) generated 3 warnings
+error: could not compile `jpyrust` (lib) due to 2 previous errors; 3 warnings emitted

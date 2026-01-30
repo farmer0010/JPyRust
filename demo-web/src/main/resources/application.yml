@@ -1,11 +1,13 @@
 server:
   port: 8080
 
-# AI Worker Configuration
+
 app:
   ai:
     work-dir: C:/jpyrust_temp
     source-script-dir: d:/JPyRust/python-core
+    model-path: "yolov8n.pt"
+    confidence: 0.5
 
 logging:
   level:

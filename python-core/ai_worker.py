@@ -1,33 +1,14 @@
-#!/usr/bin/env python3
-"""
-ai_worker.py - Universal Bridge Daemon with Shared Memory Support (Level 2)
-
-Supports multiple task types:
-  - YOLO: Image object detection
-  - SENTIMENT: Text sentiment analysis
-
-Protocol:
-  - EXECUTE <task_type> <request_id> <metadata...>
-  - EXIT
-
-Metadata formats:
-  - File Mode: <w> <h> <c> (Legacy)
-  - SHMEM Mode (v2.1 input only): SHMEM <in_id> <in_len> <meta...>
-  - SHMEM Mode (v2.2 full): SHMEM <in_id> <in_len> <out_id> <out_cap> <meta...>
-"""
-
 import sys
 import os
 import struct
 import time
 import multiprocessing.shared_memory
+import argparse
 
-# ============================================
-# INITIALIZATION
-# ============================================
-print("[Python Daemon] Universal Bridge Starting...", flush=True)
 import numpy as np
 import cv2
+
+print("[Python Daemon] Universal Bridge Starting...", flush=True)
 
 try:
     from ultralytics import YOLO
@@ -44,65 +25,51 @@ except ImportError:
     DEVICE = 'cpu'
     print("[Daemon] Torch not found, defaulting to CPU", flush=True)
 
-# Configuration
+parser = argparse.ArgumentParser()
+parser.add_argument("--daemon", action="store_true")
+parser.add_argument("--model", type=str, default="yolov8n.pt", help="Path to YOLO model")
+parser.add_argument("--conf", type=float, default=0.5, help="Confidence threshold")
+args, unknown = parser.parse_known_args()
+
 WORK_DIR = "C:/jpyrust_temp"
 HEADER_SIZE = 4
 TARGET_WIDTH = 640
 JPEG_QUALITY = 85
 
-# ============================================
-# MODEL INITIALIZATION
-# ============================================
 yolo_model = None
 
 def initialize_models():
-    """Initialize all AI models at startup."""
     global yolo_model
     
-    # YOLO Model
     if YOLO_AVAILABLE:
-        print("[Daemon] Loading YOLOv8 model...", flush=True)
+        print(f"[Daemon] Loading YOLOv8 model: {args.model}", flush=True)
         start_time = time.time()
-        yolo_model = YOLO("yolov8n.pt")
-        yolo_model.to(DEVICE)
-        print(f"[Daemon] YOLO model loaded on {DEVICE.upper()} in {time.time() - start_time:.2f}s", flush=True)
+        try:
+            yolo_model = YOLO(args.model)
+            yolo_model.to(DEVICE)
+            print(f"[Daemon] YOLO model loaded on {DEVICE.upper()} in {time.time() - start_time:.2f}s", flush=True)
+        except Exception as e:
+             print(f"[Daemon] Failed to load YOLO model: {e}", flush=True)
+             yolo_model = None
     else:
         print("[Daemon] YOLO not available", flush=True)
     
     print("[Daemon] Sentiment analyzer ready (rule-based)", flush=True)
 
-
-# ============================================
-# DATA I/O HELPERS
-# ============================================
-
 def parse_input_protocol(request_id, metadata):
-    """
-    Parses metadata to determine I/O mode.
-    Returns: (data_bytes, remaining_metadata, output_shm_info or None)
-    """
-    # Check for SHMEM Protocol
     if len(metadata) > 0 and metadata[0] == "SHMEM":
-        # SHMEM <in_id> <in_len> ...
         in_shm_name = metadata[1]
         in_size = int(metadata[2])
         
-        # Check for Output SHMEM (Level 2)
-        # We expect at least 3 args for just input, 5 args for input+output
-        # Format: SHMEM <in_id> <in_len> <out_id> <out_cap> <real_meta...>
-        
-        # Heuristic: Check if the 3rd argument looks like an output SHMEM ID (jpyrust_out_)
         if len(metadata) >= 5 and "jpyrust_out_" in metadata[3]:
             out_shm_name = metadata[3]
             out_cap = int(metadata[4])
             real_metadata = metadata[5:]
             out_info = (out_shm_name, out_cap)
         else:
-            # Level 1 (Input only)
             real_metadata = metadata[3:]
             out_info = None
 
-        # Read Input from Shared Memory
         try:
             shm = multiprocessing.shared_memory.SharedMemory(name=in_shm_name)
             data = bytes(shm.buf[:in_size])
@@ -111,7 +78,6 @@ def parse_input_protocol(request_id, metadata):
         except Exception as e:
             raise RuntimeError(f"Input SHMEM read failed: {e}")
 
-    # Default: File Protocol
     input_path = f"{WORK_DIR}/input_{request_id}.dat"
     try:
         with open(input_path, "rb") as f:
@@ -124,19 +90,12 @@ def parse_input_protocol(request_id, metadata):
     except FileNotFoundError:
         raise RuntimeError(f"Input file not found: {input_path}")
 
-
 def write_output_data(request_id, data_bytes, out_shm_info):
-    """
-    Writes output data to Shared Memory (if available) or File.
-    Returns: number of bytes written
-    """
     if out_shm_info:
         shm_name, capacity = out_shm_info
         if len(data_bytes) > capacity:
-            # Error: Buffer overflow
-            # In a real system, we might resize or handle this, but for now log error
             print(f"[Error] Output size ({len(data_bytes)}) exceeds buffer capacity ({capacity})", flush=True)
-            return 0 # Fail silently or handle upstream
+            return 0 
         
         try:
             shm = multiprocessing.shared_memory.SharedMemory(name=shm_name)
@@ -148,17 +107,11 @@ def write_output_data(request_id, data_bytes, out_shm_info):
             return 0
             
     else:
-        # File Fallback
         output_path = f"{WORK_DIR}/output_{request_id}.dat"
         with open(output_path, "wb") as f:
             f.write(struct.pack(">I", len(data_bytes)))
             f.write(data_bytes)
         return len(data_bytes)
-
-
-# ============================================
-# TASK HANDLERS
-# ============================================
 
 def resize_image(image: np.ndarray, target_width: int) -> np.ndarray:
     height, width = image.shape[:2]
@@ -167,7 +120,6 @@ def resize_image(image: np.ndarray, target_width: int) -> np.ndarray:
     scale = target_width / width
     new_height = int(height * scale)
     return cv2.resize(image, (target_width, new_height), interpolation=cv2.INTER_LINEAR)
-
 
 def handle_yolo_task(request_id: str, raw_metadata: list) -> str:
     try:
@@ -182,22 +134,19 @@ def handle_yolo_task(request_id: str, raw_metadata: list) -> str:
         
         start_time = time.time()
         
-        # Decode Image
         image = np.frombuffer(raw_data, dtype=np.uint8).reshape((height, width, channels))
         original_shape = image.shape
         
-        # Inference
         image = resize_image(image, TARGET_WIDTH)
         
         if yolo_model is not None:
-            results = yolo_model(image, verbose=False)
+            results = yolo_model(image, conf=args.conf, verbose=False)
             detections = len(results[0].boxes) if results[0].boxes is not None else 0
             annotated_frame = results[0].plot()
         else:
             annotated_frame = image
             detections = 0
         
-        # Encode Result
         encode_params = [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
         success, jpeg_data = cv2.imencode('.jpg', annotated_frame, encode_params)
         if not success:
@@ -205,7 +154,6 @@ def handle_yolo_task(request_id: str, raw_metadata: list) -> str:
         
         data_to_write = jpeg_data.tobytes()
         
-        # Write Output
         bytes_written = write_output_data(request_id, data_to_write, out_info)
         
         elapsed = (time.time() - start_time) * 1000
@@ -213,9 +161,6 @@ def handle_yolo_task(request_id: str, raw_metadata: list) -> str:
         
         print(f"[YOLO] ID:{request_id[:8]} | {mode} | {detections} objs | {elapsed:.0f}ms", flush=True)
         
-        # Return DONE <length> logic
-        # Legacy: DONE <obj_count> (Rust didn't care about the value, just the signal)
-        # New: DONE <bytes_written> (Rust needs to know how much to read from SHMEM)
         return f"DONE {bytes_written}"
         
     except Exception as e:
@@ -224,7 +169,6 @@ def handle_yolo_task(request_id: str, raw_metadata: list) -> str:
         traceback.print_exc()
         return f"ERROR {e}"
 
-
 def handle_sentiment_task(request_id: str, raw_metadata: list) -> str:
     try:
         raw_data, metadata, out_info = parse_input_protocol(request_id, raw_metadata)
@@ -232,7 +176,6 @@ def handle_sentiment_task(request_id: str, raw_metadata: list) -> str:
         start_time = time.time()
         text = raw_data.decode('utf-8')
         
-        # Analysis
         text_lower = text.lower()
         negative_words = ['bad', 'sad', 'terrible', 'awful', 'hate', 'angry', 'fail']
         positive_words = ['good', 'great', 'happy', 'love', 'amazing', 'best']
@@ -253,7 +196,6 @@ def handle_sentiment_task(request_id: str, raw_metadata: list) -> str:
         result = f"{sentiment} (confidence: {confidence:.2f})"
         result_bytes = result.encode('utf-8')
         
-        # Write Output
         bytes_written = write_output_data(request_id, result_bytes, out_info)
         
         elapsed = (time.time() - start_time) * 1000
@@ -265,16 +207,10 @@ def handle_sentiment_task(request_id: str, raw_metadata: list) -> str:
         print(f"[SENTIMENT Error] {e}", flush=True)
         return f"ERROR {e}"
 
-
-# ============================================
-# TASK DISPATCHER
-# ============================================
-
 TASK_HANDLERS = {
     "YOLO": handle_yolo_task,
     "SENTIMENT": handle_sentiment_task,
 }
-
 
 def daemon_loop():
     print("[Daemon] Entering command loop...", flush=True)
@@ -297,7 +233,6 @@ def daemon_loop():
                     break
                 
                 elif cmd == "EXECUTE":
-                    # Format: EXECUTE <task_type> <request_id> <metadata...>
                     if len(parts) < 3:
                         print("ERROR Missing arguments", flush=True)
                         continue
@@ -313,7 +248,7 @@ def daemon_loop():
                     else:
                         print(f"ERROR Unknown task type: {task_type}", flush=True)
 
-                elif cmd == "PROCESS": # Legacy
+                elif cmd == "PROCESS":
                      if len(parts) >= 5:
                         width, height, channels, request_id = parts[1], parts[2], parts[3], parts[4]
                         result = handle_yolo_task(request_id, [width, height, channels])
@@ -326,11 +261,6 @@ def daemon_loop():
     except:
         pass
 
-
 if __name__ == "__main__":
     initialize_models()
-    
-    if len(sys.argv) == 1 or (len(sys.argv) == 2 and sys.argv[1].lower() == "--daemon"):
-        daemon_loop()
-    else:
-        print("Usage: python ai_worker.py [--daemon]")
+    daemon_loop()

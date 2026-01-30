@@ -95,9 +95,20 @@ secrets.yml
 application-local.yml
 application-prod.yml
 
-# =====================
-# Test Artifacts
-# =====================
 test-output/
 *.test.jpg
 *.test.png
+
+# =====================
+# Python Distribution (Embedded)
+# =====================
+java-api/src/main/resources/python_dist/
+python_dist/
+Lib/
+site-packages/
+Scripts/
+DLLs/
+*.pyd
+*.dll
+!rust-bridge/target/**/*.dll
+

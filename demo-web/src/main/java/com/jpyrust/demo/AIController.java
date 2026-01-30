@@ -17,8 +17,6 @@ public class AIController {
         System.out.println("[Web] Received request: msg=" + message + ", id=" + id);
 
         try {
-            // JPyRustBridge bridge = new JPyRustBridge();
-            // String response = bridge.runPythonAI(message, id);
             String response = "[Legacy] Text AI not supported in this version.";
 
             return Map.of(

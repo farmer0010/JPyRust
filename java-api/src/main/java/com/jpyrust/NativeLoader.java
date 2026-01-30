@@ -13,7 +13,6 @@ public class NativeLoader {
 
     public static void load(String libName) {
         try {
-            // 1. Detect OS and determine file extension
             String os = System.getProperty("os.name").toLowerCase(Locale.ROOT);
             String extension;
             if (os.contains("win")) {
@@ -21,14 +20,12 @@ public class NativeLoader {
             } else if (os.contains("mac")) {
                 extension = ".dylib";
             } else {
-                extension = ".so"; // Default to Linux/Unix
+                extension = ".so";
             }
 
             String filename = libName + extension;
-            // Native libraries should be placed in /natives/ inside the JAR/classpath
             String resourcePath = "/natives/" + filename;
 
-            // 2. Extract resource to temp file
             InputStream is = NativeLoader.class.getResourceAsStream(resourcePath);
             if (is == null) {
                 throw new FileNotFoundException("Native library not found in classpath: " + resourcePath);
@@ -43,52 +40,25 @@ public class NativeLoader {
                 is.close();
             }
 
-            // 3. Load the library
             System.load(tempPath.toAbsolutePath().toString());
-            // Debug log (optional, can be removed in production)
-            // System.out.println("[NativeLoader] Loaded: " + tempPath.toAbsolutePath());
 
         } catch (IOException e) {
             throw new RuntimeException("Failed to load native library: " + libName, e);
         }
     }
 
-    /**
-     * Extracts a ZIP resource to a temporary directory.
-     * 
-     * @param resourcePath Path to the ZIP file in resources (e.g.,
-     *                     "/python_dist.zip")
-     * @param prefix       Prefix for the temporary directory
-     * @return Path to the extracted directory
-     */
-    /**
-     * Extracts a ZIP resource to a temporary directory.
-     * 
-     * @param resourcePath Path to the ZIP file in resources (e.g.,
-     *                     "/python_dist.zip")
-     * @param prefix       Prefix for the temporary directory
-     * @return Path to the extracted directory
-     */
     public static Path extractZip(String resourcePath, String prefix) {
         try {
             Path targetDir = Files.createTempDirectory(prefix);
-            targetDir.toFile().deleteOnExit(); // Note: This might not delete non-empty dirs on some OS
+            targetDir.toFile().deleteOnExit();
             return extractZip(resourcePath, targetDir);
         } catch (IOException e) {
             throw new RuntimeException("Failed to create temp directory with prefix: " + prefix, e);
         }
     }
 
-    /**
-     * Extracts a ZIP resource to a specific target directory.
-     *
-     * @param resourcePath Path to the ZIP file in resources
-     * @param targetDir    Directory to extract into
-     * @return Path to the extracted directory (same as targetDir)
-     */
     public static Path extractZip(String resourcePath, Path targetDir) {
         try {
-            // Ensure target directory exists
             if (!Files.exists(targetDir)) {
                 Files.createDirectories(targetDir);
             }

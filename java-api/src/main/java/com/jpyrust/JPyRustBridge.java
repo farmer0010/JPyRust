@@ -12,26 +12,21 @@ import java.nio.file.Paths;
 
 public class JPyRustBridge {
 
-    // Configurable paths - set via initialize()
-    private static String workDir = "C:/jpyrust_temp"; // Default fallback
-    private static String sourceScriptDir = "d:/JPyRust/python-core"; // Default fallback
+    private static String workDir = "C:/jpyrust_temp";
+    private static String sourceScriptDir = "d:/JPyRust/python-core";
 
-    private static final int HEADER_SIZE = 4; // 4 bytes for length
+    private static final int HEADER_SIZE = 4;
     private static boolean initialized = false;
 
-    // Static native library loading
     static {
         try {
-            System.loadLibrary("jpyrust_bridge");
+            System.loadLibrary("jpyrust");
             System.out.println("[JPyRustBridge] Native library loaded successfully");
         } catch (UnsatisfiedLinkError e) {
             System.err.println("[JPyRustBridge] Failed to load native library: " + e.getMessage());
         }
     }
 
-    /**
-     * Initialize with configurable paths from application.properties/yml
-     */
     public synchronized static void initialize(String workDirectory, String sourceScript) {
         if (initialized) {
             return;
@@ -45,14 +40,12 @@ public class JPyRustBridge {
         System.out.println("[Init] Source Script Dir: " + sourceScriptDir);
 
         try {
-            // Ensure work directory exists
             File tempDir = new File(workDir);
             if (!tempDir.exists()) {
                 tempDir.mkdirs();
                 System.out.println("[Init] Created work directory: " + workDir);
             }
 
-            // Copy ai_worker.py from source to work location
             Path sourceScript2 = Paths.get(sourceScriptDir, "ai_worker.py");
             Path targetScript = Paths.get(workDir, "ai_worker.py");
 
@@ -63,7 +56,6 @@ public class JPyRustBridge {
                 System.err.println("[Warning] Source python script not found at " + sourceScript2);
             }
 
-            // Also initialize the native Rust side
             initNative(workDir, sourceScriptDir);
 
             System.out.println("=== Initialization Complete ===");
@@ -74,44 +66,23 @@ public class JPyRustBridge {
         }
     }
 
-    /**
-     * Legacy initialize method (uses defaults)
-     */
     public synchronized static void initialize() {
         initialize(workDir, sourceScriptDir);
     }
 
-    /**
-     * Native initialization method
-     */
     private static native void initNative(String workDir, String sourceScriptDir);
 
-    /**
-     * Process image via Rust bridge with configurable work directory
-     */
     public byte[] processImage(String workDirectory, ByteBuffer data, int length, int width, int height, int channels) {
         return runPythonProcess(workDirectory, data, length, width, height, channels);
     }
 
-    /**
-     * Legacy processImage method (uses default workDir)
-     */
     public byte[] processImage(ByteBuffer data, int length, int width, int height, int channels) {
         return runPythonProcess(workDir, data, length, width, height, channels);
     }
 
-    /**
-     * Native method - now accepts workDir parameter
-     */
     private native byte[] runPythonProcess(String workDir, ByteBuffer data, int length, int width, int height,
             int channels);
 
-    /**
-     * Split File IPC Strategy (Pure Java fallback - kept for reference):
-     * 1. Write to input_image.dat
-     * 2. Python reads input, writes to output_image.dat
-     * 3. Java reads from output_image.dat (fresh file, no cache)
-     */
     public String runPythonRaw(ByteBuffer data, int length, int width, int height, int channels) {
         String inputFilePath = workDir + "/input_image.dat";
         String outputFilePath = workDir + "/output_image.dat";
@@ -120,31 +91,26 @@ public class JPyRustBridge {
         System.out.println("[JPyRust] Writing to INPUT file...");
 
         try {
-            // 1. Write to INPUT file
             byte[] inputBuffer = new byte[length];
             data.position(0);
             data.get(inputBuffer);
 
             try (FileOutputStream fos = new FileOutputStream(inputFilePath)) {
-                // Write 4-byte length header (Big Endian)
                 fos.write((length >> 24) & 0xFF);
                 fos.write((length >> 16) & 0xFF);
                 fos.write((length >> 8) & 0xFF);
                 fos.write(length & 0xFF);
-                // Write pixel data
                 fos.write(inputBuffer);
                 fos.flush();
             }
 
             System.out.println("[JPyRust] Input written: " + length + " bytes. Spawning Python...");
 
-            // 2. Delete output file if exists (ensure fresh read)
             File outputFile = new File(outputFilePath);
             if (outputFile.exists()) {
                 outputFile.delete();
             }
 
-            // 3. Spawn Python Process
             ProcessBuilder pb = new ProcessBuilder(
                     "python",
                     pythonScriptPath,
@@ -155,7 +121,6 @@ public class JPyRustBridge {
             pb.redirectErrorStream(true);
             Process process = pb.start();
 
-            // 4. Read Python Output
             StringBuilder output = new StringBuilder();
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
                 String line;
@@ -168,7 +133,6 @@ public class JPyRustBridge {
             int exitCode = process.waitFor();
             System.out.println("[JPyRust] Python exited with code: " + exitCode);
 
-            // 5. Read from OUTPUT file (completely fresh, no cache!)
             System.out.println("[JPyRust] Reading from OUTPUT file...");
 
             if (!outputFile.exists()) {
@@ -178,7 +142,6 @@ public class JPyRustBridge {
 
             byte[] outputBuffer;
             try (FileInputStream fis = new FileInputStream(outputFilePath)) {
-                // Read 4-byte length header
                 int b1 = fis.read();
                 int b2 = fis.read();
                 int b3 = fis.read();
@@ -187,7 +150,6 @@ public class JPyRustBridge {
 
                 System.out.println("[JPyRust] Output file header says: " + outputLength + " bytes");
 
-                // Read pixel data
                 outputBuffer = new byte[outputLength];
                 int totalRead = 0;
                 while (totalRead < outputLength) {
@@ -200,7 +162,6 @@ public class JPyRustBridge {
                 System.out.println("[JPyRust] Actually read: " + totalRead + " bytes");
             }
 
-            // 6. Write back to original ByteBuffer
             data.position(0);
             data.put(outputBuffer);
             data.flip();

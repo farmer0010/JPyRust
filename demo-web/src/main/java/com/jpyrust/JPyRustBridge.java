@@ -11,10 +11,12 @@ import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.UUID;
 
-/**
- * JPyRust Universal Bridge - Supports multiple task types via Python daemon.
- */
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 public class JPyRustBridge {
+
+    private static final Logger logger = LoggerFactory.getLogger(JPyRustBridge.class);
 
     private static String workDir = "C:/jpyrust_temp";
     private static String sourceScriptDir = "d:/JPyRust/python-core";
@@ -41,20 +43,16 @@ public class JPyRustBridge {
         }
     }
 
-    // Native methods
-    private static native void initNative(String workDir, String sourceScriptDir);
+    private static native void initNative(String workDir, String sourceScriptDir, String modelPath, float confidence);
 
     private native byte[] executeTask(String workDir, String taskType, String requestId,
             String metadata, ByteBuffer inputData, int inputLength);
 
-    // Legacy native method (backward compatibility)
     private native byte[] runPythonProcess(String workDir, ByteBuffer data, int length,
             int width, int height, int channels, String requestId);
 
-    /**
-     * Initialize the bridge with paths.
-     */
-    public synchronized static void initialize(String workDirectory, String sourceScript) {
+    public synchronized static void initialize(String workDirectory, String sourceScript, String modelPath,
+            float confidence) {
         if (initialized)
             return;
 
@@ -63,6 +61,8 @@ public class JPyRustBridge {
 
         System.out.println("=== JPyRust Universal Bridge ===");
         System.out.println("[Init] Work Dir: " + workDir);
+        System.out.println("[Init] Model Path: " + modelPath);
+        System.out.println("[Init] Confidence: " + confidence);
 
         try {
             File tempDir = new File(workDir);
@@ -75,7 +75,7 @@ public class JPyRustBridge {
                 Files.copy(src, dst, StandardCopyOption.REPLACE_EXISTING);
             }
 
-            initNative(workDir, sourceScriptDir);
+            initNative(workDir, sourceScriptDir, modelPath, confidence);
             initialized = true;
             System.out.println("=== Initialization Complete ===");
         } catch (IOException e) {
@@ -84,21 +84,9 @@ public class JPyRustBridge {
     }
 
     public synchronized static void initialize() {
-        initialize(workDir, sourceScriptDir);
+        initialize(workDir, sourceScriptDir, "yolov8n.pt", 0.5f);
     }
 
-    // ============================================
-    // UNIVERSAL TASK EXECUTION
-    // ============================================
-
-    /**
-     * Execute any task type with the universal protocol.
-     * 
-     * @param taskType  Task type (e.g., "YOLO", "SENTIMENT")
-     * @param metadata  Task-specific metadata string
-     * @param inputData Input data as bytes
-     * @return Output data as bytes
-     */
     public byte[] execute(String taskType, String metadata, byte[] inputData) {
         String requestId = UUID.randomUUID().toString();
         System.out.println("[Bridge] Execute: " + taskType + " | ID: " + requestId.substring(0, 8));
@@ -111,14 +99,20 @@ public class JPyRustBridge {
         return executeTask(workDir, taskType, requestId, metadata, buffer, inputData.length);
     }
 
-    // ============================================
-    // TYPED TASK METHODS
-    // ============================================
+    public static void log(String level, String msg) {
+        try {
+            if ("ERROR".equalsIgnoreCase(level))
+                logger.error("[Native] {}", msg);
+            else if ("WARN".equalsIgnoreCase(level))
+                logger.warn("[Native] {}", msg);
+            else
+                logger.info("[Native] {}", msg);
+        } catch (Throwable t) {
+            System.err.println("[JPyRustBridge-Java] Logging failed: " + t.getMessage());
+            System.out.println("[Native-Fallback] [" + level + "] " + msg);
+        }
+    }
 
-    /**
-     * Process image with YOLO object detection.
-     * Returns JPEG with bounding boxes.
-     */
     public byte[] processImage(String workDirectory, ByteBuffer data, int length,
             int width, int height, int channels, String requestId) {
         System.out.println("[Bridge] YOLO | ID: " + requestId.substring(0, 8));
@@ -126,10 +120,6 @@ public class JPyRustBridge {
         return runPythonProcess(workDirectory, data, length, width, height, channels, requestId);
     }
 
-    /**
-     * Analyze text sentiment.
-     * Returns sentiment result string.
-     */
     public String processText(String text) {
         String requestId = UUID.randomUUID().toString();
         System.out.println("[Bridge] SENTIMENT | ID: " + requestId.substring(0, 8));
@@ -149,7 +139,6 @@ public class JPyRustBridge {
         return new String(result, StandardCharsets.UTF_8);
     }
 
-    // Legacy methods for backward compatibility
     public byte[] processImage(String workDirectory, ByteBuffer data, int length,
             int width, int height, int channels) {
         return processImage(workDirectory, data, length, width, height, channels,

@@ -134,11 +134,52 @@ public class MyAIController {
 ```yaml
 app:
   ai:
-    work-dir: C:/jpyrust_temp        # Temp file storage & Runtime location
-    source-script-dir: d:/JPyRust/python-core # Python scripts location
+    work-dir: C:/jpyrust_temp        # Runtime temp directory
+    source-script-dir: ./python-core # Path to Python scripts
+    model-path: yolov8n.pt           # Model file name
+    confidence: 0.5                  # Detection confidence threshold
 ```
 
 ---
+
+## 🚀 Operational Excellence
+
+### 1. Unified Logging
+JPyRust routes **all logs** (Rust panic, Python stdout/stderr) to **Java's SLF4J**.  
+You will see unified logs in your Spring Boot console:
+```text
+INFO [JPyRustBridge] [Native] [Rust] Spawning Python daemon...
+INFO [JPyRustBridge] [Native] [Python] YOLO model loaded on CUDA
+```
+
+### 2. Thread Safety
+The bridge is fully thread-safe and panic-proof. It uses **Global References** and **Daemon Attachment** to ensure stability even under high concurrency or if the background thread is interrupted.
+
+---
+
+## 📦 Pre-built Binaries
+
+Don't want to install Rust?  
+Download the pre-compiled library from the [Releases](../../releases) page:
+
+*   **Windows**: `jpyrust.dll`
+*   **Linux**: `libjpyrust.so`
+*   **macOS**: `libjpyrust.dylib`
+
+Place the file in `rust-bridge/target/release/` (or your system library path).
+
+---
+
+## 🔧 Troubleshooting
+
+### Q. 'Shared Memory' or 'DLL' Error?
+**A.** Since v2.2 introduced Shared Memory, please **Rebuild Rust Project**: `cd rust-bridge && cargo build --release`.
+
+### Q. First Request Delay?
+**A.** The embedded Python environment takes a few seconds (1-3s) to initialize and load the AI models (Torch/YOLO) into memory on the first run. Subsequent requests are instant (~40ms).
+
+### Q. Is my GPU being used?
+**A.** Check the logs on startup: `[Daemon] Device selected: CUDA` (or `CPU`).
 
 ## 🚀 Quick Start (Run the Demo)
 
@@ -166,16 +207,7 @@ java -jar demo-web/build/libs/demo-web-0.0.1-SNAPSHOT.jar
 
 ---
 
-## 🔧 Troubleshooting
 
-### Q. 'Shared Memory' or 'DLL' Error?
-**A.** Since v2.1/v2.2 introduced Shared Memory, please **Rebuild Rust Project**: `cd rust-bridge && cargo build --release`.
-
-### Q. Is my GPU being used?
-**A.** Check the Java console logs on startup. You will see:
-`[Daemon] Device selected: CUDA` (or `CPU` if unavailable).
-
----
 
 ## 📜 Version History
 

@@ -116,19 +116,19 @@ jobs:
       if: matrix.os == 'windows-latest'
       uses: actions/upload-artifact@v4
       with:
-        name: rust-bridge-windows
-        path: rust-bridge/target/release/rust_bridge.dll
+        name: jpyrust-windows
+        path: rust-bridge/target/release/jpyrust.dll
 
     - name: Upload Artifact (Linux)
       if: matrix.os == 'ubuntu-latest'
       uses: actions/upload-artifact@v4
       with:
-        name: rust-bridge-linux
-        path: rust-bridge/target/release/librust_bridge.so
+        name: jpyrust-linux
+        path: rust-bridge/target/release/libjpyrust.so
 
     - name: Upload Artifact (macOS)
       if: matrix.os == 'macos-latest'
       uses: actions/upload-artifact@v4
       with:
-        name: rust-bridge-macos
-        path: rust-bridge/target/release/librust_bridge.dylib
+        name: jpyrust-macos
+        path: rust-bridge/target/release/libjpyrust.dylib

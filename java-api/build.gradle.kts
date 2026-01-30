@@ -52,6 +52,7 @@ tasks.register<Exec>("installPythonDeps") {
         "--target", pythonDistDir.resolve("Lib/site-packages").absolutePath,
         "--no-user",
         "--upgrade",
+        "--prefer-binary",
         "--no-warn-script-location"
     )
 }

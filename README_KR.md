@@ -130,11 +130,52 @@ public class MyAIController {
 ```yaml
 app:
   ai:
-    work-dir: C:/jpyrust_temp        # 임시 파일 저장 및 런타임
-    source-script-dir: d:/JPyRust/python-core # Python 스크립트 위치
+    work-dir: C:/jpyrust_temp        # 런타임 임시 디렉토리
+    source-script-dir: ./python-core # Python 스크립트 위치
+    model-path: yolov8n.pt           # AI 모델 파일명
+    confidence: 0.5                  # 탐지 임계값
 ```
 
 ---
+
+## 🚀 운영의 탁월성 (Operational Excellence)
+
+### 1. 통합 로깅 (Unified Logging)
+JPyRust는 **모든 로그**(Rust 패닉, Python 출력/에러)를 **Java의 SLF4J**로 라우팅합니다.  
+Spring Boot 콘솔에서 모든 로그를 통합하여 볼 수 있습니다:
+```text
+INFO [JPyRustBridge] [Native] [Rust] Spawning Python daemon...
+INFO [JPyRustBridge] [Native] [Python] YOLO model loaded on CUDA
+```
+
+### 2. 스레드 안전성 (Thread Safety)
+브리지는 완벽한 **스레드 안전성**을 보장합니다. **Global References**와 **데몬 어태치(Daemon Attachment)** 기술을 사용하여 동시 요청이 많거나 백그라운드 스레드가 종료되더라도 JVM 충돌을 방지합니다.
+
+---
+
+## 📦 사전 컴파일된 바이너리 (Pre-built Binaries)
+
+Rust를 설치하고 싶지 않으신가요?  
+[Releases](../../releases) 페이지에서 운영체제에 맞는 라이브러리를 다운로드하세요:
+
+*   **Windows**: `jpyrust.dll`
+*   **Linux**: `libjpyrust.so`
+*   **macOS**: `libjpyrust.dylib`
+
+다운로드한 파일을 `rust-bridge/target/release/` (또는 시스템 라이브러리 경로)에 배치하면 됩니다.
+
+---
+
+## 🔧 문제 해결 (Troubleshooting)
+
+### Q. 'Shared Memory' 오류가 발생해요.
+**A.** v2.2 업데이트 이후에는 **반드시 Rust 프로젝트를 다시 빌드**해야 합니다: `cd rust-bridge && cargo build --release`.
+
+### Q. 첫 요청이 느려요.
+**A.** 임베디드 Python 환경이 처음 초기화되고 AI 모델(Torch/YOLO)을 메모리에 로드하는 데 약 1~3초가 소요됩니다. 이후 요청은 즉시 처리됩니다 (~40ms).
+
+### Q. GPU가 사용되고 있나요?
+**A.** 실행 로그를 확인하세요: `[Daemon] Device selected: CUDA` (없으면 `CPU`).
 
 ## 🚀 빠른 시작 (데모 실행)
 
@@ -162,15 +203,7 @@ java -jar demo-web/build/libs/demo-web-0.0.1-SNAPSHOT.jar
 
 ---
 
-## 🔧 문제 해결
 
-### Q. 'Shared Memory' 오류가 발생해요.
-**A.** v2.1/v2.2 업데이트 이후에는 **반드시 Rust 프로젝트를 다시 빌드**해야 합니다: `cd rust-bridge && cargo build --release`
-
-### Q. GPU가 사용되고 있나요?
-**A.** 실행 로그를 확인하세요: `[Daemon] Device selected: CUDA`가 뜨면 성공입니다. (`CPU`면 자동 폴백됨)
-
----
 
 ## 📜 버전 기록 (Version History)
 

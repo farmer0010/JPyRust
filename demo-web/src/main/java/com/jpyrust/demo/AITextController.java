@@ -7,20 +7,10 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
 
-/**
- * REST Controller for Text-based AI tasks (Sentiment Analysis).
- */
 @RestController
 @RequestMapping("/api/ai")
 public class AITextController {
 
-    /**
-     * Analyze sentiment of input text.
-     * 
-     * POST /api/ai/text
-     * Body: { "text": "This is a great product!" }
-     * Response: { "sentiment": "POSITIVE (confidence: 0.60)", "input_length": 25 }
-     */
     @PostMapping(value = "/text", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<Map<String, Object>> analyzeText(@RequestBody Map<String, String> request) {
         String text = request.get("text");
@@ -55,9 +45,6 @@ public class AITextController {
         }
     }
 
-    /**
-     * Health check endpoint.
-     */
     @GetMapping("/health")
     public ResponseEntity<Map<String, String>> health() {
         return ResponseEntity.ok(Map.of(
