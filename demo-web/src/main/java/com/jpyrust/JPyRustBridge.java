@@ -14,32 +14,28 @@ import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.jpyrust.NativeLoader;
+
 public class JPyRustBridge {
 
     private static final Logger logger = LoggerFactory.getLogger(JPyRustBridge.class);
 
     private static String workDir = "C:/jpyrust_temp";
     private static String sourceScriptDir = "d:/JPyRust/python-core";
+    private static final int HEADER_SIZE = 4;
+
     private static boolean initialized = false;
 
     static {
         try {
             System.loadLibrary("jpyrust");
-            System.out.println("[JPyRustBridge] Native library loaded!");
+            System.out.println("[JPyRustBridge] Native library loaded successfully");
+
         } catch (UnsatisfiedLinkError e) {
-            String libPath = "d:/JPyRust/rust-bridge/target/release/jpyrust.dll";
-            File libFile = new File(libPath);
-            if (libFile.exists()) {
-                System.load(libPath);
-                System.out.println("[JPyRustBridge] Loaded from: " + libPath);
-            } else {
-                libPath = "d:/JPyRust/rust-bridge/target/debug/jpyrust.dll";
-                if (new File(libPath).exists()) {
-                    System.load(libPath);
-                } else {
-                    throw e;
-                }
-            }
+            System.err.println("[JPyRustBridge] Failed to load native library: " + e.getMessage());
+
+            // Removed specific path loading logic
+            throw e; // Re-throw if library cannot be loaded
         }
     }
 
@@ -68,6 +64,14 @@ public class JPyRustBridge {
             File tempDir = new File(workDir);
             if (!tempDir.exists())
                 tempDir.mkdirs();
+
+            try {
+                System.out.println("[Init] Checking for embedded Python distribution...");
+                NativeLoader.extractZip("/python_dist.zip", Paths.get(workDir));
+                System.out.println("[Init] Embedded Python extracted successfully.");
+            } catch (Exception e) {
+                System.out.println("[Init] Embedded Python not found (Dev Mode?): " + e.getMessage());
+            }
 
             Path src = Paths.get(sourceScriptDir, "ai_worker.py");
             Path dst = Paths.get(workDir, "ai_worker.py");

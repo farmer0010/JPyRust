@@ -98,38 +98,22 @@ graph TD
 
 ---
 
+
 ## 🛠️ Integration Guide
 
 How to add JPyRust to your own Spring Boot project.
 
-### 1. Copy Dependencies
+### 1. Build Configuration (`build.gradle.kts`)
 
-Transfer these files to your project:
+Ensure you set the `java.library.path` in your `bootRun` task so that Java can find the Rust DLL:
 
-*   `rust-bridge/target/release/jpyrust.dll` (or `.so`) → Library path
-*   `python-core/` → Script directory (contains `ai_worker.py`)
-*   `demo-web/src/main/java/com/jpyrust/JPyRustBridge.java` → Java source path
-
-### 2. Implement Controller
-
-Call Python logic as if it were a native Java method.
-
-```java
-@Controller
-public class MyAIController {
-    // Inject Bridge
-    private final JPyRustBridge bridge = new JPyRustBridge();
-
-    @PostMapping("/analyze")
-    @ResponseBody
-    public String analyzeText(@RequestBody String text) {
-        // Execute Python Task (One-liner!)
-        return bridge.processText(text); 
-    }
+```kotlin
+tasks.withType<org.springframework.boot.gradle.tasks.run.BootRun> {
+    systemProperty("java.library.path", file("../rust-bridge/target/release").absolutePath)
 }
 ```
 
-### 3. Configure (`application.yml`)
+### 2. Configure (`application.yml`)
 
 ```yaml
 app:
@@ -142,50 +126,12 @@ app:
 
 ---
 
-## 🚀 Operational Excellence
-
-### 1. Unified Logging
-JPyRust routes **all logs** (Rust panic, Python stdout/stderr) to **Java's SLF4J**.  
-You will see unified logs in your Spring Boot console:
-```text
-INFO [JPyRustBridge] [Native] [Rust] Spawning Python daemon...
-INFO [JPyRustBridge] [Native] [Python] YOLO model loaded on CUDA
-```
-
-### 2. Thread Safety
-The bridge is fully thread-safe and panic-proof. It uses **Global References** and **Daemon Attachment** to ensure stability even under high concurrency or if the background thread is interrupted.
-
----
-
-## 📦 Pre-built Binaries
-
-Don't want to install Rust?  
-Download the pre-compiled library from the [Releases](../../releases) page:
-
-*   **Windows**: `jpyrust.dll`
-*   **Linux**: `libjpyrust.so`
-*   **macOS**: `libjpyrust.dylib`
-
-Place the file in `rust-bridge/target/release/` (or your system library path).
-
----
-
-## 🔧 Troubleshooting
-
-### Q. 'Shared Memory' or 'DLL' Error?
-**A.** Since v2.2 introduced Shared Memory, please **Rebuild Rust Project**: `cd rust-bridge && cargo build --release`.
-
-### Q. First Request Delay?
-**A.** The embedded Python environment takes a few seconds (1-3s) to initialize and load the AI models (Torch/YOLO) into memory on the first run. Subsequent requests are instant (~40ms).
-
-### Q. Is my GPU being used?
-**A.** Check the logs on startup: `[Daemon] Device selected: CUDA` (or `CPU`).
-
 ## 🚀 Quick Start (Run the Demo)
 
 ### Prerequisites
 *   **Java 17+**
-*   *(Optional)* **Rust**: Only if you want to modify and rebuild the native bridge.
+*   **Rust (Cargo)**: Required to build the native bridge.
+*   **Python 3.10+**: (Optional) The project uses an **Embedded Python** distribution which is downloaded automatically.
 
 ### 1. Build & Run
 
@@ -193,24 +139,43 @@ Place the file in `rust-bridge/target/release/` (or your system library path).
 # 1. Clone Repository
 git clone https://github.com/your-org/JPyRust.git
 
-# 2. Build Rust Bridge (Rebuild required for v2.2)
-cd rust-bridge && cargo build --release && cd ..
+# 2. Build Rust Bridge (DLL generation)
+cd rust-bridge
+cargo build --release
+cd ..
 
 # 3. Run Java Server
-./gradlew :demo-web:bootJar
-java -jar demo-web/build/libs/demo-web-0.0.1-SNAPSHOT.jar
+# This automatically downloads Embedded Python (approx. 500MB) on first run
+./gradlew clean :demo-web:bootRun
 ```
 
 ### 2. Test
 
 *   **Webcam Demo**: Open `http://localhost:8080/video.html` in your browser.
+    *   *Note: First request may lake 1-3 seconds to initialize Python.*
 
 ---
 
+## 🔧 Troubleshooting
 
+### Q. `java.lang.UnsatisfiedLinkError: no jpyrust in java.library.path`
+**A.** The Java server cannot find `jpyrust.dll`.
+1. Ensure you ran `cargo build --release` in `rust-bridge`.
+2. check if `demo-web/build.gradle.kts` has the `java.library.path` configuration (see Integration Guide).
+
+### Q. `Python daemon exited before sending READY`
+**A.** The embedded Python failed to start.
+1. Check `C:/jpyrust_temp/` for `ai_worker.py` and `python_dist` folders.
+2. If `Lib/site-packages` is empty or missing, delete `C:/jpyrust_temp` and restart the server to force re-extraction.
+
+### Q. Build fails with `python-embed-amd64.zip` error?
+**A.** If the download fails, check your internet connection or manually download Python 3.11 embed zip to `java-api/build/tmp/`.
+
+---
 
 ## 📜 Version History
 
+*   **v2.3**: Gradle-managed Embedded Python & Automated Dependency Management.
 *   **v2.2**: **Full In-Memory Pipeline** (Input/Output) & **GPU Auto-detect**.
 *   **v2.1**: Input Shared Memory IPC (Level 1).
 *   **v2.0**: Embedded Python Self-Extraction.

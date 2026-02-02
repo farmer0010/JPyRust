@@ -19,55 +19,119 @@ public class JPyRustBridge {
     private static boolean initialized = false;
 
     static {
+        System.out.println("DEBUG: JPyRustBridge static init started.");
         try {
-            System.loadLibrary("jpyrust");
-            System.out.println("[JPyRustBridge] Native library loaded successfully");
-        } catch (UnsatisfiedLinkError e) {
-            System.err.println("[JPyRustBridge] Failed to load native library: " + e.getMessage());
+            System.out.println("DEBUG: Calling NativeLoader.load('jpyrust')...");
+            NativeLoader.load("jpyrust");
+            System.out.println("[JPyRustBridge] Native library loaded successfully via NativeLoader");
+        } catch (Throwable e) {
+            System.out.println("DEBUG: Failed to load native library!");
+            e.printStackTrace(System.out); // Print to stdout to ensure visibility
+            throw new RuntimeException("Fatal: Native library load failed", e);
         }
     }
 
-    public synchronized static void initialize(String workDirectory, String sourceScript) {
+    private static Path pythonHome;
+    private static Path pythonExe;
+
+    public synchronized static void initialize() {
+        // Default to user home directory
+        String userHome = System.getProperty("user.home");
+        Path defaultWorkDir = Paths.get(userHome, ".jpyrust");
+        initialize(defaultWorkDir.toString(), null);
+    }
+
+    public synchronized static void initialize(String workDirectory, String ignoredSourceScript) {
         if (initialized) {
             return;
         }
 
         workDir = workDirectory;
-        sourceScriptDir = sourceScript;
+        // sourceScriptDir is no longer needed as we use the embedded one
 
         System.out.println("=== JPyRust IPC Initialization ===");
         System.out.println("[Init] Work Directory: " + workDir);
-        System.out.println("[Init] Source Script Dir: " + sourceScriptDir);
 
         try {
-            File tempDir = new File(workDir);
-            if (!tempDir.exists()) {
-                tempDir.mkdirs();
-                System.out.println("[Init] Created work directory: " + workDir);
+            Path workPath = Paths.get(workDir);
+            if (!Files.exists(workPath)) {
+                Files.createDirectories(workPath);
             }
 
-            Path sourceScript2 = Paths.get(sourceScriptDir, "ai_worker.py");
-            Path targetScript = Paths.get(workDir, "ai_worker.py");
+            // 1. Setup Embedded Python
+            setupEmbeddedPython(workPath);
 
-            if (Files.exists(sourceScript2)) {
-                Files.copy(sourceScript2, targetScript, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                System.out.println("[Init] Copied ai_worker.py to " + targetScript);
-            } else {
-                System.err.println("[Warning] Source python script not found at " + sourceScript2);
-            }
-
-            initNative(workDir, sourceScriptDir);
+            // 2. Initialize Native (if still needed for Shmem, otherwise this might be
+            // optional)
+            // Assuming initNative is still relevant for Shared Memory setup on Java side
+            // If the native lib expects just a dir, we pass it.
+            initNative(workDir, workDir); // Pass workDir as script dir too since ai_worker is there
 
             System.out.println("=== Initialization Complete ===");
             initialized = true;
 
         } catch (Exception e) {
             e.printStackTrace();
+            throw new RuntimeException("Failed to initialize JPyRustBridge", e);
         }
     }
 
-    public synchronized static void initialize() {
-        initialize(workDir, sourceScriptDir);
+    private static void setupEmbeddedPython(Path targetDir) throws Exception {
+        Path pythonDistDir = targetDir.resolve("python_dist");
+        Path markerFile = pythonDistDir.resolve(".installed");
+
+        // Check if we need to extract
+        // We check for python executable or the marker
+        // To be safe, checking for marker is better if we want to ensure bootstrap ran
+        if (!Files.exists(markerFile)) {
+            System.out.println("[Init] Extracting user embedded python to: " + pythonDistDir);
+
+            // Extract the big zip
+            // NativeLoader.extractZip expects "/python_dist.zip" to be in classpath
+            NativeLoader.extractZip("/python_dist.zip", pythonDistDir);
+
+            // Run Bootstrap
+            System.out.println("[Init] Running bootstrap script...");
+            Path bootstrapScript = pythonDistDir.resolve("bootstrap.py");
+            Path pyExe = pythonDistDir.resolve("python.exe"); // It's at root of python_dist (from build script
+                                                              // structure)
+
+            if (!Files.exists(pyExe)) {
+                // Fallback or error: maybe it's in a subdir?
+                // Based on build script:
+                // into(pythonDistDir) -> python.exe is at pythonDistDir root
+            }
+
+            ProcessBuilder pb = new ProcessBuilder(
+                    pyExe.toString(),
+                    bootstrapScript.toString());
+            pb.directory(pythonDistDir.toFile());
+            pb.redirectErrorStream(true);
+
+            Process p = pb.start();
+            StringBuilder bootstrapLog = new StringBuilder();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    System.out.println("[Bootstrap] " + line);
+                    bootstrapLog.append(line).append("\n");
+                }
+            }
+
+            int exitCode = p.waitFor();
+            if (exitCode != 0) {
+                throw new RuntimeException(
+                        "Bootstrap failed with exit code: " + exitCode + "\nLog:\n" + bootstrapLog.toString());
+            }
+
+            // Marker should be created by bootstrap, but we double check or create it if we
+            // need to track "java side" init
+        } else {
+            System.out.println("[Init] Embedded Python already installed at: " + pythonDistDir);
+        }
+
+        pythonHome = pythonDistDir;
+        pythonExe = pythonDistDir.resolve("python.exe");
     }
 
     private static native void initNative(String workDir, String sourceScriptDir);
@@ -112,8 +176,8 @@ public class JPyRustBridge {
             }
 
             ProcessBuilder pb = new ProcessBuilder(
-                    "python",
-                    pythonScriptPath,
+                    pythonExe.toString(),
+                    pythonHome.resolve("ai_worker.py").toString(),
                     String.valueOf(width),
                     String.valueOf(height),
                     String.valueOf(channels));

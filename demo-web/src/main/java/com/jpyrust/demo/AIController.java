@@ -17,7 +17,7 @@ public class AIController {
         System.out.println("[Web] Received request: msg=" + message + ", id=" + id);
 
         try {
-            String response = "[Legacy] Text AI not supported in this version.";
+            String response = "Text AI is under maintenance. Please check back later.";
 
             return Map.of(
                     "status", "success",

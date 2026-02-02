@@ -102,7 +102,15 @@ test-output/
 # =====================
 # Python Distribution (Embedded)
 # =====================
-java-api/src/main/resources/python_dist/
+# =====================
+# Python Distribution (Embedded)
+# =====================
+java-api/src/main/resources/python_dist/wheels/*.whl
+java-api/src/main/resources/python_dist/python-*.zip
+java-api/src/main/resources/python_dist/Lib/
+java-api/src/main/resources/python_dist/site-packages/
+java-api/src/main/resources/python_dist/Scripts/
+java-api/src/main/resources/python_dist/DLLs/
 python_dist/
 Lib/
 site-packages/

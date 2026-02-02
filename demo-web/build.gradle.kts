@@ -21,10 +21,17 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
     implementation("org.jetbrains.kotlin:kotlin-reflect")
+    implementation(project(":java-api"))
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
 }
 
+
 tasks.withType<Test> {
     useJUnitPlatform()
+}
+
+// 👇 이 코드가 반드시 있어야 합니다!
+tasks.withType<org.springframework.boot.gradle.tasks.run.BootRun> {
+    systemProperty("java.library.path", file("../rust-bridge/target/release").absolutePath)
 }
