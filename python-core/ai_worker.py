@@ -7,6 +7,15 @@ import argparse
 
 import numpy as np
 import cv2
+try:
+    import pandas as pd
+    from sklearn.linear_model import LinearRegression
+    from textblob import TextBlob
+    ML_AVAILABLE = True
+except ImportError:
+    ML_AVAILABLE = False
+    print("[Warning] ML libraries (pandas, sklearn, textblob) not found.", flush=True)
+
 
 print("[Python Daemon] Universal Bridge Starting...", flush=True)
 
@@ -207,10 +216,98 @@ def handle_sentiment_task(request_id: str, raw_metadata: list) -> str:
         print(f"[SENTIMENT Error] {e}", flush=True)
         return f"ERROR {e}"
 
+def handle_enhanced_sentiment(request_id: str, raw_metadata: list) -> str:
+    if not ML_AVAILABLE:
+        return "ERROR ML libraries not installed"
+        
+    try:
+        raw_data, metadata, out_info = parse_input_protocol(request_id, raw_metadata)
+        text = raw_data.decode('utf-8')
+        
+        blob = TextBlob(text)
+        sentiment_score = blob.sentiment.polarity # -1.0 to 1.0
+        subjectivity = blob.sentiment.subjectivity
+        
+        if sentiment_score > 0.1:
+            sentiment = "POSITIVE"
+        elif sentiment_score < -0.1:
+            sentiment = "NEGATIVE"
+        else:
+            sentiment = "NEUTRAL"
+            
+        result = f"{sentiment} (Polarity: {sentiment_score:.2f}, Subjectivity: {subjectivity:.2f})"
+        result_bytes = result.encode('utf-8')
+        
+        bytes_written = write_output_data(request_id, result_bytes, out_info)
+        return f"DONE {bytes_written}"
+    except Exception as e:
+        return f"ERROR {e}"
+
+def handle_regression_task(request_id: str, raw_metadata: list) -> str:
+    if not ML_AVAILABLE:
+        return "ERROR ML libraries not installed"
+
+    try:
+        raw_data, metadata, out_info = parse_input_protocol(request_id, raw_metadata)
+        # Input: JSON string "[[1, 2], [2, 4], [3, 6]]"
+        import json
+        json_str = raw_data.decode('utf-8')
+        data = json.loads(json_str)
+        
+        df = pd.DataFrame(data, columns=['x', 'y'])
+        X = df[['x']]
+        y = df['y']
+        
+        model = LinearRegression()
+        model.fit(X, y)
+        
+        slope = model.coef_[0]
+        intercept = model.intercept_
+        
+        result = f"Slope: {slope:.4f}, Intercept: {intercept:.4f}"
+        result_bytes = result.encode('utf-8')
+        
+        bytes_written = write_output_data(request_id, result_bytes, out_info)
+        return f"DONE {bytes_written}"
+    except Exception as e:
+        return f"ERROR {e}"
+
+def handle_edge_detection(request_id: str, raw_metadata: list) -> str:
+    try:
+        raw_data, metadata, out_info = parse_input_protocol(request_id, raw_metadata)
+        
+        if len(metadata) < 3:
+            return "ERROR Missing metadata"
+            
+        width = int(metadata[0])
+        height = int(metadata[1])
+        channels = int(metadata[2])
+        
+        image = np.frombuffer(raw_data, dtype=np.uint8).reshape((height, width, channels))
+        
+        # Canny Edge Detection
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        edges = cv2.Canny(gray, 100, 200)
+        edges_bgr = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
+        
+        success, jpeg_data = cv2.imencode('.jpg', edges_bgr)
+        if not success:
+            return "ERROR Encode failed"
+            
+        bytes_written = write_output_data(request_id, jpeg_data.tobytes(), out_info)
+        return f"DONE {bytes_written}"
+    except Exception as e:
+        return f"ERROR {e}"
+
+
 TASK_HANDLERS = {
     "YOLO": handle_yolo_task,
-    "SENTIMENT": handle_sentiment_task,
+    "SENTIMENT": handle_sentiment_task, # Legacy rule-based
+    "NLP_TEXTBLOB": handle_enhanced_sentiment,
+    "REGRESSION": handle_regression_task,
+    "EDGE_DETECT": handle_edge_detection,
 }
+
 
 def daemon_loop():
     print("[Daemon] Entering command loop...", flush=True)

@@ -143,6 +143,47 @@ public class JPyRustBridge {
         return new String(result, StandardCharsets.UTF_8);
     }
 
+    public String processNlp(String text) {
+        String requestId = UUID.randomUUID().toString();
+        byte[] inputBytes = text.getBytes(StandardCharsets.UTF_8);
+        ByteBuffer buffer = ByteBuffer.allocateDirect(inputBytes.length);
+        buffer.order(ByteOrder.nativeOrder());
+        buffer.put(inputBytes);
+        buffer.flip();
+
+        byte[] result = executeTask(workDir, "NLP_TEXTBLOB", requestId, "NONE", buffer, inputBytes.length);
+        if (result == null)
+            return "ERROR";
+        return new String(result, StandardCharsets.UTF_8);
+    }
+
+    public String processRegression(String jsonPoints) {
+        // Input: "[[1, 2], [2, 4]]"
+        String requestId = UUID.randomUUID().toString();
+        byte[] inputBytes = jsonPoints.getBytes(StandardCharsets.UTF_8);
+        ByteBuffer buffer = ByteBuffer.allocateDirect(inputBytes.length);
+        buffer.order(ByteOrder.nativeOrder());
+        buffer.put(inputBytes);
+        buffer.flip();
+
+        byte[] result = executeTask(workDir, "REGRESSION", requestId, "NONE", buffer, inputBytes.length);
+        if (result == null)
+            return "ERROR";
+        return new String(result, StandardCharsets.UTF_8);
+    }
+
+    public byte[] processEdgeDetection(byte[] imageData, int width, int height, int channels) {
+        String requestId = UUID.randomUUID().toString();
+        String metadata = width + " " + height + " " + channels;
+
+        ByteBuffer buffer = ByteBuffer.allocateDirect(imageData.length);
+        buffer.order(ByteOrder.nativeOrder());
+        buffer.put(imageData);
+        buffer.flip();
+
+        return executeTask(workDir, "EDGE_DETECT", requestId, metadata, buffer, imageData.length);
+    }
+
     public byte[] processImage(String workDirectory, ByteBuffer data, int length,
             int width, int height, int channels) {
         return processImage(workDirectory, data, length, width, height, channels,

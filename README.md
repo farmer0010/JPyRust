@@ -17,7 +17,16 @@
 
 Unlike the slow `ProcessBuilder` or complex HTTP API approaches, it uses **Rust JNI** and a **Persistent Embedded Python Daemon** to guarantee near-native speed.
 
-**New in v2.2:** implemented **Level 2 Full Shared Memory Pipeline**, achieving **100% Disk-Free Inference** and **GPU Auto-Detection**.
+
+**New in v2.3:** "Batteries-Included" AI. Now comes with **Pandas, Scikit-Learn, and TextBlob** pre-installed for immediate Data Science and NLP tasks.
+
+### 🚀 Why JPyRust? (Vs. Alternatives)
+
+| Feature | Local Command Line | HTTP API (FastAPI/Flask) | **JPyRust** |
+| :--- | :---: | :---: | :---: |
+| **Latency** | 🔴 Slow (VM Startup) | 🟡 Medium (Network Overhead) | 🟢 **Instant (Shared Memory)** |
+| **Complexity** | 🟡 Medium (Parsing pipes) | 🔴 High (Managing microservices) | 🟢 **Low (Single Monolith)** |
+| **Deployment** | 🟢 Easy | 🔴 Hard (Requires Docker/Orch) | 🟢 **Easy (Embedded Clone)** |
 
 ---
 
@@ -47,13 +56,14 @@ JPyRust v2.2 includes intelligent hardware detection:
 
 ## 🎯 Supported Tasks & Capabilities
 
-This is not just an image processor; it is a **Universal Bridge** capable of executing any Python logic.
+The following "Standard Battery" is included out-of-the-box (v2.3+):
 
-| Task | Endpoint | I/O | Description |
+| Task | Endpoint | Libs | Description |
 |------|----------|-----|-------------|
-| 🔍 **Object Detection** | `POST /api/ai/process-image` | **Full Shared Memory** | CCTV, Webcam Streaming |
-| 💬 **NLP Analysis** | `POST /api/ai/text` | **Full Shared Memory** | Sentiment Analysis, Chatbots |
-| 🏥 **Health Check** | `GET /api/ai/health` | - → JSON | Monitor Daemon Status |
+| 🔍 **Object Detection** | `processImage` | `Ultralytics (YOLO)` | CCTV, Webcam Streaming |
+| 🧠 **True NLP** | `processNlp` | `TextBlob` | Sentiment, Tokenization (0.0=Neutral) |
+| 📈 **Data Science** | `processRegression` | `Pandas`, `Scikit-Learn` | Real-time Linear Regression |
+| 🎨 **Image Filter** | `processEdgeDetection` | `OpenCV` | Canny Edge Detection |
 
 ---
 
@@ -75,7 +85,7 @@ graph TD
 
     subgraph "Python Layer (Daemon)"
         Daemon["🐍 Python Process"]
-        Models["🧠 AI Models (YOLO/NLP)"]
+        Models["🧠 AI (YOLO/PANDAS/SKLEARN)"]
     end
 
     Controller --> JavaBridge
@@ -97,6 +107,38 @@ graph TD
 3.  **Python Layer**: Embedded Daemon. Reads input from RAM, runs inference (GPU/CPU), and writes results back to RAM. **No disk access** occurs during inference.
 
 ---
+
+## 🧩 How to Extend (Add New Features)
+
+JPyRust is designed to be extensible. Follow these 3 steps to add your own Python logic:
+
+1.  **Python Side (`ai_worker.py`)**:
+    *   Define a new handler function (e.g., `handle_my_task`).
+    *   Register it in the `TASK_HANDLERS` dictionary.
+    ```python
+    def handle_my_task(request_id, metadata):
+        # ... your logic ...
+        return "DONE " + str(bytes_written)
+
+    TASK_HANDLERS = {
+        "YOLO": handle_yolo_task,
+        "MY_TASK": handle_my_task,
+    }
+    ```
+2.  **Java Side (`JPyRustBridge.java`)**:
+    *   Add a wrapper method calling `executeTask`.
+    ```java
+    public String runMyTask(String input) {
+        byte[] inputBytes = input.getBytes();
+        // ... bytebuffer setup ...
+        executeTask(workDir, "MY_TASK", ...);
+    }
+    ```
+3.  **Dependencies**:
+    *   Add any new libraries to `requirements.txt`. They will be auto-installed on the next server restart.
+
+---
+
 
 
 ## 🛠️ Integration Guide
