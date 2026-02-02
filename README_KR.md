@@ -96,36 +96,22 @@ graph TD
 
 ---
 
+
 ## 🛠️ 통합 가이드
 
 JPyRust를 여러분의 Spring Boot 프로젝트에 추가하는 방법입니다.
 
-### 1. 의존성 파일 복사
+### 1. 빌드 설정 (`build.gradle.kts`)
 
-다음 파일들을 프로젝트로 복사하세요:
+Java가 Rust DLL을 찾을 수 있도록 `bootRun` 태스크에 `java.library.path`를 설정해야 합니다:
 
-*   `rust-bridge/target/release/jpyrust.dll` (또는 `.so`) → 라이브러리 경로
-*   `python-core/` → 스크립트 디렉토리 (`ai_worker.py` 포함)
-*   `demo-web/src/main/java/com/jpyrust/JPyRustBridge.java` → Java 소스 경로
-
-### 2. 컨트롤러 구현
-
-```java
-@Controller
-public class MyAIController {
-    // 브리지 주입
-    private final JPyRustBridge bridge = new JPyRustBridge();
-
-    @PostMapping("/analyze")
-    @ResponseBody
-    public String analyzeText(@RequestBody String text) {
-        // Python 작업 실행
-        return bridge.processText(text); 
-    }
+```kotlin
+tasks.withType<org.springframework.boot.gradle.tasks.run.BootRun> {
+    systemProperty("java.library.path", file("../rust-bridge/target/release").absolutePath)
 }
 ```
 
-### 3. 설정 (`application.yml`)
+### 2. 설정 (`application.yml`)
 
 ```yaml
 app:
@@ -138,50 +124,12 @@ app:
 
 ---
 
-## 🚀 운영의 탁월성 (Operational Excellence)
-
-### 1. 통합 로깅 (Unified Logging)
-JPyRust는 **모든 로그**(Rust 패닉, Python 출력/에러)를 **Java의 SLF4J**로 라우팅합니다.  
-Spring Boot 콘솔에서 모든 로그를 통합하여 볼 수 있습니다:
-```text
-INFO [JPyRustBridge] [Native] [Rust] Spawning Python daemon...
-INFO [JPyRustBridge] [Native] [Python] YOLO model loaded on CUDA
-```
-
-### 2. 스레드 안전성 (Thread Safety)
-브리지는 완벽한 **스레드 안전성**을 보장합니다. **Global References**와 **데몬 어태치(Daemon Attachment)** 기술을 사용하여 동시 요청이 많거나 백그라운드 스레드가 종료되더라도 JVM 충돌을 방지합니다.
-
----
-
-## 📦 사전 컴파일된 바이너리 (Pre-built Binaries)
-
-Rust를 설치하고 싶지 않으신가요?  
-[Releases](../../releases) 페이지에서 운영체제에 맞는 라이브러리를 다운로드하세요:
-
-*   **Windows**: `jpyrust.dll`
-*   **Linux**: `libjpyrust.so`
-*   **macOS**: `libjpyrust.dylib`
-
-다운로드한 파일을 `rust-bridge/target/release/` (또는 시스템 라이브러리 경로)에 배치하면 됩니다.
-
----
-
-## 🔧 문제 해결 (Troubleshooting)
-
-### Q. 'Shared Memory' 오류가 발생해요.
-**A.** v2.2 업데이트 이후에는 **반드시 Rust 프로젝트를 다시 빌드**해야 합니다: `cd rust-bridge && cargo build --release`.
-
-### Q. 첫 요청이 느려요.
-**A.** 임베디드 Python 환경이 처음 초기화되고 AI 모델(Torch/YOLO)을 메모리에 로드하는 데 약 1~3초가 소요됩니다. 이후 요청은 즉시 처리됩니다 (~40ms).
-
-### Q. GPU가 사용되고 있나요?
-**A.** 실행 로그를 확인하세요: `[Daemon] Device selected: CUDA` (없으면 `CPU`).
-
 ## 🚀 빠른 시작 (데모 실행)
 
 ### 필수 조건
 *   **Java 17+**
-*   *(선택 사항)* **Rust**: 네이티브 브리지를 수정 시에만 필요.
+*   **Rust (Cargo)**: 네이티브 브리지 빌드를 위해 필요합니다.
+*   **Python 3.10+**: (선택 사항) 프로젝트 실행 시 **임베디드 Python** 배포판이 자동으로 다운로드됩니다.
 
 ### 1. 빌드 및 실행
 
@@ -189,24 +137,43 @@ Rust를 설치하고 싶지 않으신가요?
 # 1. 저장소 복제
 git clone https://github.com/your-org/JPyRust.git
 
-# 2. Rust 브리지 빌드 (v2.2 필수)
-cd rust-bridge && cargo build --release && cd ..
+# 2. Rust 브리지 빌드 (DLL 생성)
+cd rust-bridge
+cargo build --release
+cd ..
 
 # 3. Java 서버 실행
-./gradlew :demo-web:bootJar
-java -jar demo-web/build/libs/demo-web-0.0.1-SNAPSHOT.jar
+# 최초 실행 시 임베디드 Python(약 500MB)을 자동으로 다운로드합니다.
+./gradlew clean :demo-web:bootRun
 ```
 
 ### 2. 테스트
 
 *   **웹캠 데모**: `http://localhost:8080/video.html`
+    *   *참고: 첫 번째 AI 요청 시 Python 초기화로 인해 1~3초 정도 지연될 수 있습니다.*
 
 ---
 
+## 🔧 문제 해결 (Troubleshooting)
 
+### Q. `java.lang.UnsatisfiedLinkError: no jpyrust in java.library.path`
+**A.** Java 서버가 `jpyrust.dll`을 찾지 못했습니다.
+1. `rust-bridge` 폴더에서 `cargo build --release`를 실행했는지 확인하세요.
+2. `demo-web/build.gradle.kts`에 `java.library.path` 설정이 되어 있는지 확인하세요 (통합 가이드 참조).
+
+### Q. `Python daemon exited before sending READY`
+**A.** 임베디드 Python 실행에 실패했습니다.
+1. `C:/jpyrust_temp/` 폴더 내에 `ai_worker.py` 파일과 `python_dist` 폴더가 있는지 확인하세요.
+2. 만약 `Lib/site-packages`가 비어 있거나 손상되었다면, `C:/jpyrust_temp` 폴더를 삭제하고 서버를 재시작하세요.
+
+### Q. 빌드 중 `python-embed-amd64.zip` 다운로드 실패?
+**A.** 다운로드가 실패한다면 인터넷 연결을 확인하거나, Python 3.11 embed zip 파일을 수동으로 다운로드하여 `java-api/build/tmp/` 경로에 넣어주세요.
+
+---
 
 ## 📜 버전 기록 (Version History)
 
+*   **v2.3**: Gradle 기반 임베디드 Python 관리 및 자동 의존성 설치 기능 추가.
 *   **v2.2**: **Full In-Memory Pipeline (입출력)** 및 **GPU 자동 감지**.
 *   **v2.1**: 입력 데이터 공유 메모리 적용 (Level 1).
 *   **v2.0**: 임베디드 Python 자가 추출 기능.
