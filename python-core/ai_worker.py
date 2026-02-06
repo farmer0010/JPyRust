@@ -5,8 +5,30 @@ import time
 import multiprocessing.shared_memory
 import argparse
 
+# --- Auto-Bootstrap Logic ---
+current_dir = os.path.dirname(os.path.abspath(__file__))
+marker_file = os.path.join(current_dir, ".installed")
+
+if not os.path.exists(marker_file):
+    print("[Daemon] First run detected. Bootstrapping dependencies...", flush=True)
+    try:
+        # Save args
+        original_argv = sys.argv[:]
+        
+        import bootstrap
+        bootstrap.main()
+        
+        # Restore args
+        sys.argv = original_argv
+        print("[Daemon] Bootstrap complete. Starting worker...", flush=True)
+    except Exception as e:
+        print(f"[Daemon] Bootstrap failed: {e}", flush=True)
+        # Continue anyway, imports might fail later
+# ----------------------------
+
 import numpy as np
 import cv2
+
 try:
     import pandas as pd
     from sklearn.linear_model import LinearRegression
@@ -65,7 +87,12 @@ def initialize_models():
     
     print("[Daemon] Sentiment analyzer ready (rule-based)", flush=True)
 
-def parse_input_protocol(request_id, metadata):
+def parse_input_protocol(request_id, metadata, task_type=None):
+    # Hybrid IPC for text-based tasks: READ from SHMEM (Rust sends data there), 
+    # but force FILE OUTPUT (avoids Windows SHMEM write permission issues)
+    TEXT_BASED_TASKS = {"NLP_TEXTBLOB", "SENTIMENT", "REGRESSION"}
+    force_file_output = task_type and task_type.upper() in TEXT_BASED_TASKS
+    
     if len(metadata) > 0 and metadata[0] == "SHMEM":
         in_shm_name = metadata[1]
         in_size = int(metadata[2])
@@ -74,15 +101,29 @@ def parse_input_protocol(request_id, metadata):
             out_shm_name = metadata[3]
             out_cap = int(metadata[4])
             real_metadata = metadata[5:]
-            out_info = (out_shm_name, out_cap)
+            # For text tasks: ignore output SHMEM, use File instead
+            out_info = None if force_file_output else (out_shm_name, out_cap)
         else:
             real_metadata = metadata[3:]
             out_info = None
 
         try:
-            shm = multiprocessing.shared_memory.SharedMemory(name=in_shm_name)
-            data = bytes(shm.buf[:in_size])
-            shm.close()
+            # Retry mechanism for Windows Shared Memory Access Denied (WinError 5)
+            # Increased delay and attempts for more robust handling
+            MAX_ATTEMPTS = 15
+            for attempt in range(MAX_ATTEMPTS):
+                try:
+                    shm = multiprocessing.shared_memory.SharedMemory(name=in_shm_name)
+                    data = bytes(shm.buf[:in_size])
+                    shm.close()
+                    break
+                except PermissionError as e:
+                    if attempt == MAX_ATTEMPTS - 1: raise e
+                    time.sleep(0.05 + attempt * 0.01)  # 50ms base + progressive delay
+                except FileNotFoundError as e:
+                    if attempt == MAX_ATTEMPTS - 1: raise e
+                    time.sleep(0.05 + attempt * 0.01)
+                    
             return data, real_metadata, out_info
         except Exception as e:
             raise RuntimeError(f"Input SHMEM read failed: {e}")
@@ -107,9 +148,17 @@ def write_output_data(request_id, data_bytes, out_shm_info):
             return 0 
         
         try:
-            shm = multiprocessing.shared_memory.SharedMemory(name=shm_name)
-            shm.buf[:len(data_bytes)] = data_bytes
-            shm.close()
+            MAX_ATTEMPTS = 15
+            for attempt in range(MAX_ATTEMPTS):
+                try:
+                    shm = multiprocessing.shared_memory.SharedMemory(name=shm_name)
+                    shm.buf[:len(data_bytes)] = data_bytes
+                    shm.close()
+                    break
+                except PermissionError:
+                    if attempt == MAX_ATTEMPTS - 1: raise
+                    time.sleep(0.05 + attempt * 0.01)
+                    
             return len(data_bytes)
         except Exception as e:
             print(f"[Error] Output SHMEM write failed: {e}", flush=True)
@@ -180,7 +229,7 @@ def handle_yolo_task(request_id: str, raw_metadata: list) -> str:
 
 def handle_sentiment_task(request_id: str, raw_metadata: list) -> str:
     try:
-        raw_data, metadata, out_info = parse_input_protocol(request_id, raw_metadata)
+        raw_data, metadata, out_info = parse_input_protocol(request_id, raw_metadata, task_type="SENTIMENT")
         
         start_time = time.time()
         text = raw_data.decode('utf-8')
@@ -221,7 +270,7 @@ def handle_enhanced_sentiment(request_id: str, raw_metadata: list) -> str:
         return "ERROR ML libraries not installed"
         
     try:
-        raw_data, metadata, out_info = parse_input_protocol(request_id, raw_metadata)
+        raw_data, metadata, out_info = parse_input_protocol(request_id, raw_metadata, task_type="NLP_TEXTBLOB")
         text = raw_data.decode('utf-8')
         
         blob = TextBlob(text)
@@ -248,7 +297,7 @@ def handle_regression_task(request_id: str, raw_metadata: list) -> str:
         return "ERROR ML libraries not installed"
 
     try:
-        raw_data, metadata, out_info = parse_input_protocol(request_id, raw_metadata)
+        raw_data, metadata, out_info = parse_input_protocol(request_id, raw_metadata, task_type="REGRESSION")
         # Input: JSON string "[[1, 2], [2, 4], [3, 6]]"
         import json
         json_str = raw_data.decode('utf-8')

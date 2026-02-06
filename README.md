@@ -4,7 +4,7 @@
 
 [![Java](https://img.shields.io/badge/Java-17+-orange?logo=openjdk)](https://openjdk.org/)
 [![Rust](https://img.shields.io/badge/Rust-1.70+-orange?logo=rust)](https://www.rust-lang.org/)
-[![Python](https://img.shields.io/badge/Python-3.10-blue?logo=python)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.11-blue?logo=python)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 [🇰🇷 한국어 버전 (Korean Version)](README_KR.md)
@@ -17,8 +17,7 @@
 
 Unlike the slow `ProcessBuilder` or complex HTTP API approaches, it uses **Rust JNI** and a **Persistent Embedded Python Daemon** to guarantee near-native speed.
 
-
-**New in v2.3:** "Batteries-Included" AI. Now comes with **Pandas, Scikit-Learn, and TextBlob** pre-installed for immediate Data Science and NLP tasks.
+**New in v2.4:** Intelligent IPC Mode Selection. Image processing uses **Shared Memory** for maximum performance, while text-based tasks (NLP, Regression) use **File IPC** for Windows compatibility.
 
 ### 🚀 Why JPyRust? (Vs. Alternatives)
 
@@ -32,44 +31,44 @@ Unlike the slow `ProcessBuilder` or complex HTTP API approaches, it uses **Rust 
 
 ## ⚡ Performance Benchmarks
 
-| Metric | Traditional Way (ProcessBuilder) | 🚀 JPyRust (v2.2) | Improvement |
+| Metric | Traditional Way (ProcessBuilder) | 🚀 JPyRust (v2.4) | Improvement |
 |--------|:--------------------------------:|:-------------------:|:-----------:|
 | **Startup Overhead** | ~1,500ms (Boot Python VM) | **0ms** (Always Online) | **Infinite** |
-| **Object Detection (YOLO)** | ~2,000ms | **~40ms** (GPU) / **~90ms** (CPU) | 🔥 **50x Faster** |
-| **Text Analysis (NLP)** | ~7,000ms (Load Model) | **~9ms** (Zero-Copy RAM) | 🔥 **778x Faster** |
-| **Data Transfer** | Disk I/O (Thrashing) | **100% Shared Memory** | **No Disk Wear** |
+| **Object Detection (YOLO)** | ~2,000ms | **~100ms** (CPU) / **~40ms** (GPU) | 🔥 **50x Faster** |
+| **Text Analysis (NLP)** | ~7,000ms (Load Model) | **~50ms** (File IPC) | 🔥 **140x Faster** |
+| **Data Transfer** | Disk I/O (Thrashing) | **Hybrid (SHMEM/File)** | **Optimized** |
 
 ---
 
 ## ⚠️ Hardware Acceleration (GPU)
 
-JPyRust v2.2 includes intelligent hardware detection:
+JPyRust includes intelligent hardware detection:
 
 > **Auto-Detection Enabled:**
 > *   **GPU Mode:** Automatically activated if NVIDIA Drivers & CUDA Toolkit are installed.  
 >     *(Speed: ~0.04s / 25+ FPS)*
 > *   **CPU Mode:** If CUDA is missing, it **automatically falls back** to CPU.  
->     *(Speed: ~0.09s / 10+ FPS)*
+>     *(Speed: ~0.10s / 10+ FPS)*
 > *   *No configuration needed.*
 
 ---
 
 ## 🎯 Supported Tasks & Capabilities
 
-The following "Standard Battery" is included out-of-the-box (v2.3+):
+The following "Standard Battery" is included out-of-the-box:
 
-| Task | Endpoint | Libs | Description |
-|------|----------|-----|-------------|
-| 🔍 **Object Detection** | `processImage` | `Ultralytics (YOLO)` | CCTV, Webcam Streaming |
-| 🧠 **True NLP** | `processNlp` | `TextBlob` | Sentiment, Tokenization (0.0=Neutral) |
-| 📈 **Data Science** | `processRegression` | `Pandas`, `Scikit-Learn` | Real-time Linear Regression |
-| 🎨 **Image Filter** | `processEdgeDetection` | `OpenCV` | Canny Edge Detection |
+| Task | Endpoint | IPC Mode | Libs | Description |
+|------|----------|----------|-----|-------------|
+| 🔍 **Object Detection** | `processImage` | SHMEM | `Ultralytics (YOLO)` | CCTV, Webcam Streaming |
+| 🧠 **NLP Analysis** | `processNlp` | FILE | `TextBlob` | Sentiment Analysis |
+| 📈 **Data Science** | `processRegression` | FILE | `Pandas`, `Scikit-Learn` | Linear Regression |
+| 🎨 **Image Filter** | `processEdgeDetection` | SHMEM | `OpenCV` | Canny Edge Detection |
 
 ---
 
 ## 🏗️ Architecture
 
-A 3-Layer Architecture where Java controls Python via Rust using **Named Shared Memory**.
+A 3-Layer Architecture where Java controls Python via Rust using **Intelligent IPC Selection**.
 
 ```mermaid
 graph TD
@@ -81,6 +80,7 @@ graph TD
 
     subgraph "Rust Layer (JNI)"
         RustBridge["🦀 jpyrust.dll"]
+        IPCSwitch{"Task Type?"}
     end
 
     subgraph "Python Layer (Daemon)"
@@ -91,137 +91,144 @@ graph TD
     Controller --> JavaBridge
     JavaBridge -- "Extracts on 1st run" --> Dist
     JavaBridge -- "JNI Call" --> RustBridge
-    RustBridge -- "Spawn/Monitor" --> Daemon
+    RustBridge --> IPCSwitch
     
-    RustBridge -- "Write Input" --> RAM_IN["💾 Input SHM"]
-    RAM_IN -- "Read Zero-Copy" --> Daemon
-    Daemon -- "Process (GPU/CPU)" --> Models
+    IPCSwitch -- "Image (YOLO/Edge)" --> RAM_IN["💾 Shared Memory"]
+    IPCSwitch -- "Text (NLP/Regression)" --> FILE_IN["📁 File IPC"]
     
-    Models -- "Result" --> Daemon
-    Daemon -- "Write Output" --> RAM_OUT["💾 Output SHM"]
-    RAM_OUT -- "Read Result" --> RustBridge
+    RAM_IN --> Daemon
+    FILE_IN --> Daemon
+    Daemon --> Models
 ```
 
-1.  **Java Layer**: Handles web requests and calls Rust via JNI.
-2.  **Rust Layer**: Supervisor. Allocates Input/Output Shared Memory buffers (`jpyrust_{uuid}`, `jpyrust_out_{uuid}`) and coordinates data flow.
-3.  **Python Layer**: Embedded Daemon. Reads input from RAM, runs inference (GPU/CPU), and writes results back to RAM. **No disk access** occurs during inference.
+**IPC Mode Selection:**
+- **SHMEM (Shared Memory):** Used for large binary data (images, video frames)
+- **FILE IPC:** Used for text-based tasks - ensures Windows compatibility
 
 ---
 
 ## 🧩 How to Extend (Add New Features)
 
-JPyRust is designed to be extensible. Follow these 3 steps to add your own Python logic:
+### Adding a New Python Task
 
-1.  **Python Side (`ai_worker.py`)**:
-    *   Define a new handler function (e.g., `handle_my_task`).
-    *   Register it in the `TASK_HANDLERS` dictionary.
+1.  **Python Side (`python-core/ai_worker.py`)**:
     ```python
     def handle_my_task(request_id, metadata):
+        raw_data, meta, out_info = parse_input_protocol(request_id, metadata)
         # ... your logic ...
-        return "DONE " + str(bytes_written)
+        result_bytes = result.encode('utf-8')
+        bytes_written = write_output_data(request_id, result_bytes, out_info)
+        return f"DONE {bytes_written}"
 
     TASK_HANDLERS = {
         "YOLO": handle_yolo_task,
         "MY_TASK": handle_my_task,
     }
     ```
+
 2.  **Java Side (`JPyRustBridge.java`)**:
-    *   Add a wrapper method calling `executeTask`.
     ```java
     public String runMyTask(String input) {
-        byte[] inputBytes = input.getBytes();
-        // ... bytebuffer setup ...
-        executeTask(workDir, "MY_TASK", ...);
+        byte[] inputBytes = input.getBytes("UTF-8");
+        ByteBuffer buffer = ByteBuffer.allocateDirect(inputBytes.length);
+        buffer.put(inputBytes);
+        buffer.flip();
+        
+        String requestId = UUID.randomUUID().toString();
+        byte[] result = executeTask(workDir, "MY_TASK", requestId, "", buffer, inputBytes.length);
+        return new String(result, "UTF-8");
     }
     ```
-3.  **Dependencies**:
-    *   Add any new libraries to `requirements.txt`. They will be auto-installed on the next server restart.
+
+3.  **Adding New Python Libraries**:
+    ```bash
+    # Edit requirements.txt
+    echo "new-library==1.0.0" >> requirements.txt
+    
+    # Restart server - dependencies auto-install
+    ./gradlew :demo-web:bootRun
+    ```
 
 ---
 
-
-
 ## 🛠️ Integration Guide
-
-How to add JPyRust to your own Spring Boot project.
 
 ### 1. Build Configuration (`build.gradle.kts`)
 
-Ensure you set the `java.library.path` in your `bootRun` task so that Java can find the Rust DLL:
-
 ```kotlin
+dependencies {
+    implementation(project(":java-api"))
+}
+
 tasks.withType<org.springframework.boot.gradle.tasks.run.BootRun> {
     systemProperty("java.library.path", file("../rust-bridge/target/release").absolutePath)
 }
 ```
 
-### 2. Configure (`application.yml`)
+### 2. Application Configuration (`application.yml`)
 
 ```yaml
 app:
   ai:
-    work-dir: C:/jpyrust_temp        # Runtime temp directory
-    source-script-dir: ./python-core # Path to Python scripts
-    model-path: yolov8n.pt           # Model file name
-    confidence: 0.5                  # Detection confidence threshold
+    work-dir: C:/jpyrust_temp
+    source-script-dir: ./python-core
+    model-path: yolov8n.pt
+    confidence: 0.5
 ```
 
 ---
 
-## 🚀 Quick Start (Run the Demo)
+## 🚀 Quick Start
 
 ### Prerequisites
 *   **Java 17+**
-*   **Rust (Cargo)**: Required to build the native bridge.
-*   **Python 3.10+**: (Optional) The project uses an **Embedded Python** distribution which is downloaded automatically.
+*   **Rust (Cargo)**: Required to build the native bridge
+*   **Python**: Not required (Embedded Python auto-downloads)
 
 ### 1. Build & Run
 
 ```bash
-# 1. Clone Repository
+# Clone Repository
 git clone https://github.com/your-org/JPyRust.git
+cd JPyRust
 
-# 2. Build Rust Bridge (DLL generation)
+# Build Rust Bridge
 cd rust-bridge
 cargo build --release
 cd ..
 
-# 3. Run Java Server
-# This automatically downloads Embedded Python (approx. 500MB) on first run
-./gradlew clean :demo-web:bootRun
+# Run Server (auto-downloads ~500MB Python on first run)
+./gradlew :demo-web:bootRun
 ```
 
 ### 2. Test
 
-*   **Webcam Demo**: Open `http://localhost:8080/video.html` in your browser.
-    *   *Note: First request may lake 1-3 seconds to initialize Python.*
+*   **Features Demo**: `http://localhost:8080/features.html`
+*   **Video Streaming**: `http://localhost:8080/video.html`
 
 ---
 
 ## 🔧 Troubleshooting
 
-### Q. `java.lang.UnsatisfiedLinkError: no jpyrust in java.library.path`
-**A.** The Java server cannot find `jpyrust.dll`.
-1. Ensure you ran `cargo build --release` in `rust-bridge`.
-2. check if `demo-web/build.gradle.kts` has the `java.library.path` configuration (see Integration Guide).
+### Q. `UnsatisfiedLinkError: no jpyrust in java.library.path`
+**A.** Run `cargo build --release` in `rust-bridge/` folder.
 
 ### Q. `Python daemon exited before sending READY`
-**A.** The embedded Python failed to start.
-1. Check `C:/jpyrust_temp/` for `ai_worker.py` and `python_dist` folders.
-2. If `Lib/site-packages` is empty or missing, delete `C:/jpyrust_temp` and restart the server to force re-extraction.
+**A.** Delete `C:/jpyrust_temp/` folder and restart.
 
-### Q. Build fails with `python-embed-amd64.zip` error?
-**A.** If the download fails, check your internet connection or manually download Python 3.11 embed zip to `java-api/build/tmp/`.
+### Q. NLP/Regression returns empty result?
+**A.** Check server logs for `[Rust] Text task detected - using FILE IPC` message.
 
 ---
 
 ## 📜 Version History
 
-*   **v2.3**: Gradle-managed Embedded Python & Automated Dependency Management.
-*   **v2.2**: **Full In-Memory Pipeline** (Input/Output) & **GPU Auto-detect**.
-*   **v2.1**: Input Shared Memory IPC (Level 1).
-*   **v2.0**: Embedded Python Self-Extraction.
-*   **v1.0**: Initial JNI + File IPC implementation.
+*   **v2.4**: **Intelligent IPC Selection** - SHMEM for images, File for text (Windows fix)
+*   **v2.3**: Gradle-managed Embedded Python & Auto Dependency Management
+*   **v2.2**: Full In-Memory Pipeline (Input/Output) & GPU Auto-detect
+*   **v2.1**: Input Shared Memory IPC (Level 1)
+*   **v2.0**: Embedded Python Self-Extraction
+*   **v1.0**: Initial JNI + File IPC implementation
 
 ---
 

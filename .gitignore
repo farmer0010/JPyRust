@@ -119,4 +119,16 @@ DLLs/
 *.pyd
 *.dll
 !rust-bridge/target/**/*.dll
+!java-api/src/main/resources/natives/*.dll
 
+# =====================
+# Test Logs & CI Artifacts
+# =====================
+test_*.log
+*_test_output.txt
+*.test.log
+
+# =====================
+# Gemini/AI Agent Artifacts
+# =====================
+.gemini/

@@ -114,7 +114,7 @@ fn spawn_python_daemon(work_dir: &str) -> Result<PythonDaemon, String> {
 
     let mut ready_line = String::new();
     let timeout_start = std::time::Instant::now();
-    let timeout_duration = std::time::Duration::from_secs(60);
+    let timeout_duration = std::time::Duration::from_secs(600); // 10 min for first-time install
 
     loop {
         if timeout_start.elapsed() > timeout_duration {
@@ -287,6 +287,24 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_executeTask<'local>(
     log_to_java("INFO", &format!("[Rust] Task: {} | ID: {} | Mode: FULL-SHMEM", task_type_str, &request_id_str[..8.min(request_id_str.len())]));
 
     let length = input_length as usize;
+
+    // Force FILE fallback for text-based tasks (avoid Windows SHMEM permission issues)
+    let text_tasks = ["NLP_TEXTBLOB", "SENTIMENT", "REGRESSION"];
+    if text_tasks.contains(&task_type_str.as_str()) {
+        log_to_java("INFO", "[Rust] Text task detected - using FILE IPC for stability");
+        let buffer_ptr = match env.get_direct_buffer_address(&input_data) {
+            Ok(ptr) => ptr,
+            Err(e) => {
+                log_to_java("ERROR", &format!("[Rust] Buffer error: {}", e));
+                return std::ptr::null_mut();
+            }
+        };
+        let data = unsafe { std::slice::from_raw_parts(buffer_ptr, length) };
+        return execute_with_file_fallback(
+            env, &work_dir_str, &task_type_str, &request_id_str,
+            &metadata_str, data, start_time
+        );
+    }
 
     let buffer_ptr = match env.get_direct_buffer_address(&input_data) {
         Ok(ptr) => ptr,
