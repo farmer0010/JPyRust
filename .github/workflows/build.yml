@@ -132,3 +132,32 @@ jobs:
       with:
         name: jpyrust-macos
         path: rust-bridge/target/release/libjpyrust.dylib
+
+  # ====================================
+  # Release Job: Create GitHub Release
+  # ====================================
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+    - name: Download All Artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+
+    - name: Display Artifacts
+      run: ls -R artifacts/
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          artifacts/jpyrust-windows/jpyrust.dll
+          artifacts/jpyrust-linux/libjpyrust.so
+          artifacts/jpyrust-macos/libjpyrust.dylib
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
