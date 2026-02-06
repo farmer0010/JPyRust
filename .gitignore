@@ -129,6 +129,17 @@ test_*.log
 *.test.log
 
 # =====================
+# Root Project Logs & Temp Files  
+# =====================
+*.log
+*.txt
+!requirements.txt
+debug_*.log
+error_*.log
+*_debug.log
+*_error.log
+
+# =====================
 # Gemini/AI Agent Artifacts
 # =====================
 .gemini/

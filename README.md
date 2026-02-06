@@ -2,10 +2,12 @@
 
 > **"The Ultimate Python AI Integration for Java: Reducing 7s latency to 0.04s."**
 
+![Build Status](https://img.shields.io/github/actions/workflow/status/farmer0010/JPyRust/build.yml?style=flat-square&logo=github&label=Build)
+![Release](https://img.shields.io/github/v/release/farmer0010/JPyRust?style=flat-square&color=blue&label=Release)
+![License](https://img.shields.io/github/license/farmer0010/JPyRust?style=flat-square&color=green)
 [![Java](https://img.shields.io/badge/Java-17+-orange?logo=openjdk)](https://openjdk.org/)
 [![Rust](https://img.shields.io/badge/Rust-1.70+-orange?logo=rust)](https://www.rust-lang.org/)
 [![Python](https://img.shields.io/badge/Python-3.11-blue?logo=python)](https://www.python.org/)
-[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 [🇰🇷 한국어 버전 (Korean Version)](README_KR.md)
 
