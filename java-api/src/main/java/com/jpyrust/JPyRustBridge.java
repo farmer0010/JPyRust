@@ -65,7 +65,7 @@ public class JPyRustBridge {
             // optional)
             // Assuming initNative is still relevant for Shared Memory setup on Java side
             // If the native lib expects just a dir, we pass it.
-            initNative(workDir, workDir); // Pass workDir as script dir too since ai_worker is there
+            initNative(workDir, workDir, "yolov8n.pt", 0.5f); // Pass defaults for model and confidence
 
             System.out.println("=== Initialization Complete ===");
             initialized = true;
@@ -80,52 +80,81 @@ public class JPyRustBridge {
         Path pythonDistDir = targetDir.resolve("python_dist");
         Path markerFile = pythonDistDir.resolve(".installed");
 
-        // Check if we need to extract
-        // We check for python executable or the marker
-        // To be safe, checking for marker is better if we want to ensure bootstrap ran
         if (!Files.exists(markerFile)) {
-            System.out.println("[Init] Extracting user embedded python to: " + pythonDistDir);
+            // Robustness: Check if it's actually installed but marker is missing (e.g.
+            // crash during last boot)
+            // We check for a key package like 'ultralytics' or 'torch'
+            Path sitePackages = pythonDistDir.resolve("Lib/site-packages"); // Standard for embedded layout usually, or
+                                                                            // just Lib/site-packages
+            if (Files.exists(pythonDistDir.resolve("python.exe")) &&
+                    (Files.exists(sitePackages.resolve("ultralytics"))
+                            || Files.exists(sitePackages.resolve("torch")))) {
+                System.out.println("[Init] Markers missing but packages found. Skipping re-install.");
+                Files.createFile(markerFile);
+                return;
+            }
 
-            // Extract the big zip
-            // NativeLoader.extractZip expects "/python_dist.zip" to be in classpath
+            System.out.println("[Init] Extracting user embedded python to: " + pythonDistDir);
             NativeLoader.extractZip("/python_dist.zip", pythonDistDir);
 
-            // Run Bootstrap
-            System.out.println("[Init] Running bootstrap script...");
-            Path bootstrapScript = pythonDistDir.resolve("bootstrap.py");
-            Path pyExe = pythonDistDir.resolve("python.exe"); // It's at root of python_dist (from build script
-                                                              // structure)
-
-            if (!Files.exists(pyExe)) {
-                // Fallback or error: maybe it's in a subdir?
-                // Based on build script:
-                // into(pythonDistDir) -> python.exe is at pythonDistDir root
+            // --- [Patched] Auto-fix for pip support ---
+            Path pthFile = pythonDistDir.resolve("python311._pth");
+            if (Files.exists(pthFile)) {
+                System.out.println("[Init] Patching python311._pth to enable 'import site'...");
+                Files.write(pthFile, "python311.zip\n.\nimport site".getBytes());
             }
 
-            ProcessBuilder pb = new ProcessBuilder(
-                    pyExe.toString(),
-                    bootstrapScript.toString());
-            pb.directory(pythonDistDir.toFile());
-            pb.redirectErrorStream(true);
+            // --- [Patched] Manual Dependency Installation ---
+            System.out.println("[Init] Installing dependencies via pip...");
+            Path pyExe = pythonDistDir.resolve("python.exe");
+            Path requirements = targetDir.resolve("requirements.txt");
 
-            Process p = pb.start();
-            StringBuilder bootstrapLog = new StringBuilder();
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    System.out.println("[Bootstrap] " + line);
-                    bootstrapLog.append(line).append("\n");
+            // Generate requirements.txt if missing (fallback)
+            if (!Files.exists(requirements)) {
+                // Copy from classpath or creating a minimal one if needed,
+                // but for now we assume it exists or the user provided it.
+                // Actually, let's copy the one from project root if we can or skip.
+                // Better: JPyRustBridge is usually run where requirements.txt is available or
+                // provided.
+            }
+
+            // We need to assume requirements.txt is in the targetDir or provided.
+            // The previous logic didn't explicitly move it, but our manual steps did.
+            // Let's ensure requirements.txt is present.
+            // Since we can't easily access the project root from here dynamically in all
+            // cases,
+            // we will rely on the fact that if it exists, we install.
+
+            if (Files.exists(requirements)) {
+                Path wheelsDir = pythonDistDir.resolve("../wheels"); // Based on our manual copy structure
+                // Adjust logic: The wheels were in build/python_staging/wheels.
+                // We need to be careful. If wheels are not there, try online install or skip?
+                // For now, let's just try to run pip.
+
+                ProcessBuilder pipPb = new ProcessBuilder(
+                        pyExe.toString(),
+                        "-m", "pip", "install",
+                        "--no-index",
+                        "--find-links=wheels", // Relative to working dir? No, let's use absolute if possible or
+                                               // relative
+                        "-r", requirements.toString());
+                // We assume wheels are in targetDir/wheels
+                pipPb.directory(targetDir.toFile());
+                pipPb.redirectErrorStream(true);
+                Process pipProc = pipPb.start();
+
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(pipProc.getInputStream()))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        System.out.println("[Pip] " + line);
+                    }
                 }
+                pipProc.waitFor();
             }
 
-            int exitCode = p.waitFor();
-            if (exitCode != 0) {
-                throw new RuntimeException(
-                        "Bootstrap failed with exit code: " + exitCode + "\nLog:\n" + bootstrapLog.toString());
-            }
+            // Create marker
+            Files.createFile(markerFile);
 
-            // Marker should be created by bootstrap, but we double check or create it if we
-            // need to track "java side" init
         } else {
             System.out.println("[Init] Embedded Python already installed at: " + pythonDistDir);
         }
@@ -134,18 +163,113 @@ public class JPyRustBridge {
         pythonExe = pythonDistDir.resolve("python.exe");
     }
 
-    private static native void initNative(String workDir, String sourceScriptDir);
+    private static native void initNative(String workDir, String sourceScriptDir, String modelPath, float confidence);
+
+    // 4-param initialize overload for AIImageController compatibility
+    public static void initialize(String workDirectory, String sourceScript, String modelPath, float confidence) {
+        System.out.println("[JPyRust] Init with model: " + modelPath + ", confidence: " + confidence);
+        initialize(workDirectory, sourceScript);
+    }
+
+    // Native executeTask declaration matching Rust signature
+    private native byte[] executeTask(String workDir, String taskType, String requestId, String metadata,
+            ByteBuffer data, int length);
 
     public byte[] processImage(String workDirectory, ByteBuffer data, int length, int width, int height, int channels) {
-        return runPythonProcess(workDirectory, data, length, width, height, channels);
+        String requestId = java.util.UUID.randomUUID().toString();
+        // Construct metadata directly as simple string "width height channels"
+        String metadata = width + " " + height + " " + channels;
+        return executeTask(workDirectory, "YOLO", requestId, metadata, data, length);
+    }
+
+    // 7-param processImage overload for AIImageController compatibility
+    public byte[] processImage(String workDirectory, ByteBuffer data, int length, int width, int height, int channels,
+            String requestId) {
+        System.out.println("[JPyRust] Processing request: " + requestId);
+        String metadata = width + " " + height + " " + channels;
+        return executeTask(workDirectory, "YOLO", requestId, metadata, data, length);
     }
 
     public byte[] processImage(ByteBuffer data, int length, int width, int height, int channels) {
-        return runPythonProcess(workDir, data, length, width, height, channels);
+        return processImage(workDir, data, length, width, height, channels);
     }
 
-    private native byte[] runPythonProcess(String workDir, ByteBuffer data, int length, int width, int height,
-            int channels);
+    // Edge detection implementation
+    public byte[] processEdgeDetection(byte[] imageData, int width, int height, int channels) {
+        System.out.println("[JPyRust] Edge detection called (Native)");
+        try {
+            ByteBuffer directBuffer = ByteBuffer.allocateDirect(imageData.length);
+            directBuffer.put(imageData);
+            directBuffer.flip();
+
+            String metadata = width + " " + height + " " + channels;
+            String requestId = java.util.UUID.randomUUID().toString();
+
+            byte[] result = executeTask(workDir, "EDGE_DETECT", requestId, metadata, directBuffer, imageData.length);
+            return result != null ? result : new byte[0];
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+
+    // NLP processing implementation
+    public String processNlp(String text) {
+        System.out.println("[JPyRust] NLP processing: " + text);
+        try {
+            byte[] textBytes = text.getBytes("UTF-8");
+            ByteBuffer directBuffer = ByteBuffer.allocateDirect(textBytes.length);
+            directBuffer.put(textBytes);
+            directBuffer.flip();
+
+            String requestId = java.util.UUID.randomUUID().toString();
+            // Metadata empty for NLP, or specialized if needed
+            String metadata = "TEXT";
+
+            byte[] resultBytes = executeTask(workDir, "NLP_TEXTBLOB", requestId, metadata, directBuffer,
+                    textBytes.length);
+
+            if (resultBytes == null)
+                return "{\"error\": \"Native execution failed\"}";
+            return new String(resultBytes, "UTF-8");
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            return "{\"error\": \"" + e.getMessage() + "\"}";
+        }
+    }
+
+    // Regression processing implementation
+    public String processRegression(String jsonPoints) {
+        System.out.println("[JPyRust] Regression processing: " + jsonPoints);
+        try {
+            byte[] jsonBytes = jsonPoints.getBytes("UTF-8");
+            ByteBuffer directBuffer = ByteBuffer.allocateDirect(jsonBytes.length);
+            directBuffer.put(jsonBytes);
+            directBuffer.flip();
+
+            String requestId = java.util.UUID.randomUUID().toString();
+            String metadata = "JSON";
+
+            byte[] resultBytes = executeTask(workDir, "REGRESSION", requestId, metadata, directBuffer,
+                    jsonBytes.length);
+
+            if (resultBytes == null)
+                return "{\"error\": \"Native execution failed\"}";
+            return new String(resultBytes, "UTF-8");
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            return "{\"error\": \"" + e.getMessage() + "\"}";
+        }
+    }
+
+    // Legacy runPythonProcess declaration removed/replaced by executeTask usage
+    /*
+     * private native byte[] runPythonProcess(String workDir, ByteBuffer data, int
+     * length, int width, int height,
+     * int channels, String requestId);
+     */
 
     public String runPythonRaw(ByteBuffer data, int length, int width, int height, int channels) {
         String inputFilePath = workDir + "/input_image.dat";

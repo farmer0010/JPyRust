@@ -1,29 +1,107 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>JPyRust Zero-Copy Demo</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; background: #f0f2f5; }
-        .container { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-        h1 { color: #1a1a1a; margin-bottom: 20px; }
-        .controls { margin-bottom: 30px; display: flex; gap: 10px; align-items: center; }
-        button { background: #0066ff; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: 500; font-size: 16px; transition: background 0.2s; }
-        button:hover { background: #0052cc; }
-        button:disabled { background: #ccc; cursor: not-allowed; }
-        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-        .image-box { border: 2px dashed #ddd; border-radius: 8px; min-height: 300px; display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; background: #fafafa; }
-        .image-box img { max-width: 100%; max-height: 400px; object-fit: contain; }
-        .p-title { font-weight: bold; margin-bottom: 10px; color: #555; }
-        #status { margin-top: 15px; font-weight: 500; color: #0066ff; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f0f2f5;
+        }
+
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            color: #1a1a1a;
+            margin-bottom: 20px;
+        }
+
+        .controls {
+            margin-bottom: 30px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        button {
+            background: #0066ff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 500;
+            font-size: 16px;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: #0052cc;
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .image-box {
+            border: 2px dashed #ddd;
+            border-radius: 8px;
+            min-height: 300px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            background: #fafafa;
+        }
+
+        .image-box img {
+            max-width: 100%;
+            max-height: 400px;
+            object-fit: contain;
+        }
+
+        .p-title {
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #555;
+        }
+
+        #status {
+            margin-top: 15px;
+            font-weight: 500;
+            color: #0066ff;
+        }
     </style>
 </head>
+
 <body>
     <div class="container">
         <h1>⚡ JPyRust Zero-Copy Image Processor</h1>
         <p>Demonstrates high-performance image processing using Shared Memory (Java ↔ Rust ↔ Python).</p>
-        
+
+        <h1>JPyRust Demo</h1>
+        <p>
+            <a href="video.html">🎥 Webcam Demo (YOLO)</a> |
+            <a href="features.html">🆕 New Features (NLP, Data Science)</a>
+        </p>
         <div class="controls">
             <input type="file" id="fileInput" accept="image/*">
             <button onclick="processImage()" id="btnProcess">🚀 Process Image</button>
@@ -103,4 +181,5 @@
         }
     </script>
 </body>
+
 </html>

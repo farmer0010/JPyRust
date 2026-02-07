@@ -4,6 +4,16 @@ import struct
 import time
 import multiprocessing.shared_memory
 import argparse
+try:
+    import psutil
+except ImportError:
+    psutil = None
+import platform
+import importlib.util
+import glob
+import json
+
+APP_START_TIME = time.time()
 
 # --- Auto-Bootstrap Logic ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -86,6 +96,34 @@ def initialize_models():
         print("[Daemon] YOLO not available", flush=True)
     
     print("[Daemon] Sentiment analyzer ready (rule-based)", flush=True)
+
+    print("[Daemon] Sentiment analyzer ready (rule-based)", flush=True)
+    load_plugins()
+
+def load_plugins():
+    plugin_dir = os.path.join(current_dir, "plugins")
+    if not os.path.exists(plugin_dir):
+        os.makedirs(plugin_dir)
+        return
+
+    print(f"[Daemon] Scanning plugins in {plugin_dir}...", flush=True)
+    plugin_files = glob.glob(os.path.join(plugin_dir, "*.py"))
+    
+    for plugin_file in plugin_files:
+        if "__init__" in plugin_file: continue
+        
+        try:
+            module_name = os.path.splitext(os.path.basename(plugin_file))[0]
+            spec = importlib.util.spec_from_file_location(module_name, plugin_file)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            
+            if hasattr(module, "TASK_TYPE") and hasattr(module, "handle"):
+                task_type = module.TASK_TYPE
+                TASK_HANDLERS[task_type] = module.handle
+                print(f"[Plugin] Loaded {module_name} -> {task_type}", flush=True)
+        except Exception as e:
+             print(f"[Plugin] Failed to load {plugin_file}: {e}", flush=True)
 
 def parse_input_protocol(request_id, metadata, task_type=None):
     # Hybrid IPC for text-based tasks: READ from SHMEM (Rust sends data there), 
@@ -348,6 +386,45 @@ def handle_edge_detection(request_id: str, raw_metadata: list) -> str:
     except Exception as e:
         return f"ERROR {e}"
 
+def handle_status(request_id: str, raw_metadata: list) -> str:
+    try:
+        if psutil:
+            process = psutil.Process()
+            memory_info = process.memory_info()
+            mem_mb = round(memory_info.rss / 1024 / 1024, 2)
+            pid = process.pid
+            cpu = process.cpu_percent(interval=None)
+        else:
+            process = None
+            mem_mb = "N/A (psutil missing)"
+            pid = os.getpid()
+            cpu = "N/A"
+        
+        gpu_info = "N/A"
+        if torch.cuda.is_available():
+            gpu_info = torch.cuda.get_device_name(0)
+            
+        status = {
+            "status": "UP",
+            "uptime_seconds": int(time.time() - APP_START_TIME),
+            "pid": pid,
+            "memory_usage_mb": mem_mb,
+            "cpu_percent": cpu,
+            "device": DEVICE,
+            "gpu_model": gpu_info,
+            "active_plugins": [k for k in TASK_HANDLERS.keys() if k not in ["YOLO", "SENTIMENT", "NLP_TEXTBLOB", "REGRESSION", "EDGE_DETECT", "STATUS"]]
+        }
+        
+        # Determine output mode (same logic as text tasks: prefer FILE for JSON to be safe)
+        _, _, out_info = parse_input_protocol(request_id, raw_metadata, task_type="STATUS")
+        
+        json_result = json.dumps(status)
+        bytes_written = write_output_data(request_id, json_result.encode('utf-8'), out_info)
+        
+        return f"DONE {bytes_written}"
+    except Exception as e:
+        return f"ERROR {e}"
+
 
 TASK_HANDLERS = {
     "YOLO": handle_yolo_task,
@@ -355,6 +432,7 @@ TASK_HANDLERS = {
     "NLP_TEXTBLOB": handle_enhanced_sentiment,
     "REGRESSION": handle_regression_task,
     "EDGE_DETECT": handle_edge_detection,
+    "STATUS": handle_status,
 }
 
 

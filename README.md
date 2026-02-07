@@ -233,12 +233,24 @@ cd ..
 
 ## 📜 Version History
 
-*   **v2.4**: **Intelligent IPC Selection** - SHMEM for images, File for text (Windows fix)
-*   **v2.3**: Gradle-managed Embedded Python & Auto Dependency Management
-*   **v2.2**: Full In-Memory Pipeline (Input/Output) & GPU Auto-detect
-*   **v2.1**: Input Shared Memory IPC (Level 1)
-*   **v2.0**: Embedded Python Self-Extraction
-*   **v1.0**: Initial JNI + File IPC implementation
+*   **v1.1 (Latest)**:
+    *   **Observability**: Real-time monitoring of Python daemon (RAM, GPU) via `/api/status`.
+    *   **Plugin System**: Dynamic loading of Python extensions from `python-core/plugins/`.
+    *   **Docker Registry Guide**: Detailed guide for automating Docker Hub deployments via GitHub Actions.
+*   **v1.0 (Official Release)**:
+    *   Universal Bridge Architecture (Java-Rust-Python)
+    *   Intelligent IPC Selection (SHMEM for Images, File for Text)
+    *   Multi-OS Support (Windows, Linux, macOS)
+    *   Embedded Python & Auto-Dependency Management
+    *   GPU Auto-Detection
+
+---
+
+## 📅 Roadmap
+
+*   [ ] **Docker Registry Integration**: Auto-push to Docker Hub on GitHub Release (Guide provided).
+*   [ ] **GPU Resource Management**: Dynamic batching based on VRAM usage.
+*   [ ] **Hot-Reloading**: Reload Python plugins without restarting the server.
 
 ---
 

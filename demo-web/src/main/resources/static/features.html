@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JPyRust New Features Demo</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f0f2f5;
+        }
+
+        .card {
+            background: white;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            color: #2c3e50;
+        }
+
+        h2 {
+            color: #34495e;
+            border-bottom: 2px solid #ecf0f1;
+            padding-bottom: 10px;
+        }
+
+        textarea,
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        button:hover {
+            background-color: #2980b9;
+        }
+
+        .result {
+            margin-top: 10px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-left: 4px solid #2ecc71;
+            font-family: monospace;
+            white-space: pre-wrap;
+        }
+
+        img {
+            max-width: 100%;
+            margin-top: 10px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>🚀 JPyRust Standard Battery Features</h1>
+    <p><a href="index.html">← Back to Main Demo / Video</a></p>
+
+    <!-- NLP Section -->
+    <div class="card">
+        <h2>🧠 True NLP (Sentiment Analysis)</h2>
+        <p>Uses <span style="background: #eee; padding: 2px 5px; border-radius: 3px;">TextBlob</span> for real sentiment
+            analysis.</p>
+        <textarea id="nlpInput" rows="3"
+            placeholder="Enter English text... (e.g. I absolutely love this project!)"></textarea>
+        <button onclick="testNlp()">Analyze Sentiment</button>
+        <div id="nlpResult" class="result" style="display:none"></div>
+    </div>
+
+    <!-- Regression Section -->
+    <div class="card">
+        <h2>📈 Data Science (Linear Regression)</h2>
+        <p>Uses <span style="background: #eee; padding: 2px 5px; border-radius: 3px;">Pandas & Scikit-Learn</span> to
+            calculate slope/intercept.</p>
+        <input type="text" id="regInput" value="[[1, 2], [2, 4], [3, 6], [4, 8]]"
+            placeholder="JSON Points e.g. [[1,2], [3,4]]">
+        <button onclick="testRegression()">Calculate Model</button>
+        <div id="regResult" class="result" style="display:none"></div>
+    </div>
+
+    <!-- Edge Detection Section -->
+    <div class="card">
+        <h2>🎨 Computer Vision (Edge Detection)</h2>
+        <p>Uses <span style="background: #eee; padding: 2px 5px; border-radius: 3px;">OpenCV</span> Canny Filter.</p>
+        <input type="file" id="edgeInput" accept="image/*">
+        <button onclick="testEdge()">Detect Edges</button>
+        <div id="edgeResult" class="result" style="display:none">
+            <img id="edgeImg" src="" alt="Edge Result">
+        </div>
+    </div>
+
+    <script>
+        async function testNlp() {
+            const text = document.getElementById('nlpInput').value;
+            const res = await fetch('/api/ai/nlp', {
+                method: 'POST',
+                body: text,
+                headers: { 'Content-Type': 'text/plain' }
+            });
+            const data = await res.json();
+            const el = document.getElementById('nlpResult');
+            el.style.display = 'block';
+            el.innerText = data.result || JSON.stringify(data);
+        }
+
+        async function testRegression() {
+            const json = document.getElementById('regInput').value;
+            const res = await fetch('/api/ai/regression', {
+                method: 'POST',
+                body: json,
+                headers: { 'Content-Type': 'text/plain' } // Sending as plain text for simplicity
+            });
+            const data = await res.json();
+            const el = document.getElementById('regResult');
+            el.style.display = 'block';
+            el.innerText = data.result || JSON.stringify(data);
+        }
+
+        async function testEdge() {
+            const fileInput = document.getElementById('edgeInput');
+            if (fileInput.files.length === 0) return alert('Select an image');
+
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+
+            const res = await fetch('/api/ai/edge-detection', {
+                method: 'POST',
+                body: formData
+            });
+
+            if (res.ok) {
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const el = document.getElementById('edgeResult');
+                const img = document.getElementById('edgeImg');
+                el.style.display = 'block';
+                img.src = url;
+            } else {
+                alert('Detailed Error: ' + res.status);
+            }
+        }
+    </script>
+</body>
+
+</html>

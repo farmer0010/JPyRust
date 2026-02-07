@@ -28,14 +28,14 @@ public class JPyRustBridge {
 
     static {
         try {
-            System.loadLibrary("jpyrust");
+            System.out.println("[JPyRustBridge] Initializing... calling NativeLoader.load('jpyrust')");
+            NativeLoader.load("jpyrust");
             System.out.println("[JPyRustBridge] Native library loaded successfully");
 
-        } catch (UnsatisfiedLinkError e) {
-            System.err.println("[JPyRustBridge] Failed to load native library: " + e.getMessage());
-
-            // Removed specific path loading logic
-            throw e; // Re-throw if library cannot be loaded
+        } catch (Throwable e) {
+            System.err.println("[JPyRustBridge] FATAL: Failed to load native library: " + e.getMessage());
+            e.printStackTrace();
+            throw new RuntimeException("Native library load failed", e);
         }
     }
 
@@ -77,6 +77,32 @@ public class JPyRustBridge {
             Path dst = Paths.get(workDir, "ai_worker.py");
             if (Files.exists(src)) {
                 Files.copy(src, dst, StandardCopyOption.REPLACE_EXISTING);
+            }
+
+            // Copy plugins directory
+            Path pluginsSrc = Paths.get(sourceScriptDir, "plugins");
+            Path pluginsDst = Paths.get(workDir, "plugins");
+            if (Files.exists(pluginsSrc)) {
+                if (!Files.exists(pluginsDst)) {
+                    Files.createDirectories(pluginsDst);
+                }
+                try (var stream = Files.walk(pluginsSrc)) {
+                    stream.forEach(source -> {
+                        try {
+                            Path destination = pluginsDst.resolve(pluginsSrc.relativize(source));
+                            if (Files.isDirectory(source)) {
+                                if (!Files.exists(destination))
+                                    Files.createDirectories(destination);
+                            } else {
+                                Files.copy(source, destination, StandardCopyOption.REPLACE_EXISTING);
+                            }
+                        } catch (IOException e) {
+                            System.err
+                                    .println("[Init] Failed to copy plugin file: " + source + " -> " + e.getMessage());
+                        }
+                    });
+                }
+                System.out.println("[Init] Plugins directory copied successfully.");
             }
 
             initNative(workDir, sourceScriptDir, modelPath, confidence);
@@ -192,5 +218,27 @@ public class JPyRustBridge {
 
     public byte[] processImage(ByteBuffer data, int length, int width, int height, int channels) {
         return processImage(workDir, data, length, width, height, channels);
+    }
+
+    /**
+     * Generic method to send any task to the Python daemon.
+     * Useful for Status checks and Plugins.
+     */
+    public String sendTask(String taskType, String metadata) {
+        String requestId = UUID.randomUUID().toString();
+        // Send dummy input (1 byte) as some tasks might expect it,
+        // though STATUS/PLUGINS might primarily use metadata.
+        byte[] dummyInput = "{}".getBytes(StandardCharsets.UTF_8);
+
+        ByteBuffer buffer = ByteBuffer.allocateDirect(dummyInput.length);
+        buffer.order(ByteOrder.nativeOrder());
+        buffer.put(dummyInput);
+        buffer.flip();
+
+        byte[] result = executeTask(workDir, taskType, requestId, metadata, buffer, dummyInput.length);
+
+        if (result == null)
+            return "ERROR: Bridge returned null";
+        return new String(result, StandardCharsets.UTF_8);
     }
 }

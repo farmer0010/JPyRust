@@ -47,58 +47,44 @@ public class AIImageController {
 
     @PostMapping(value = "/process-image", consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = MediaType.IMAGE_JPEG_VALUE)
     public ResponseEntity<byte[]> processImage(@RequestParam("file") MultipartFile file) {
-        String requestId = UUID.randomUUID().toString();
-        System.out.println("[AIImageController] Request Received | ID: " + requestId);
+        // ... (keep existing YOLO logic) ...
+        return processImageInternal(file, "YOLO");
+    }
 
-        long tStart = System.nanoTime();
+    @PostMapping(value = "/edge-detection", consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = MediaType.IMAGE_JPEG_VALUE)
+    public ResponseEntity<byte[]> processEdgeDetection(@RequestParam("file") MultipartFile file) {
+        return processImageInternal(file, "EDGE");
+    }
+
+    private ResponseEntity<byte[]> processImageInternal(MultipartFile file, String mode) {
+        String requestId = UUID.randomUUID().toString();
         try {
             BufferedImage inputImage = ImageIO.read(file.getInputStream());
-            if (inputImage == null) {
-                System.out.println("[AIImageController] Invalid Image | ID: " + requestId);
-                return ResponseEntity.badRequest().build();
-            }
-            System.out.println(
-                    "[AIImageController] Image Decoded: " + inputImage.getWidth() + "x" + inputImage.getHeight());
+            if (inputImage == null) return ResponseEntity.badRequest().build();
 
-            BufferedImage bgrImage = new BufferedImage(inputImage.getWidth(), inputImage.getHeight(),
-                    BufferedImage.TYPE_3BYTE_BGR);
+            // Convert to BGR (OpenCV standard)
+            BufferedImage bgrImage = new BufferedImage(inputImage.getWidth(), inputImage.getHeight(), BufferedImage.TYPE_3BYTE_BGR);
             bgrImage.getGraphics().drawImage(inputImage, 0, 0, null);
 
-            int width = bgrImage.getWidth();
-            int height = bgrImage.getHeight();
-            int channels = 3;
             byte[] pixelData = ((DataBufferByte) bgrImage.getRaster().getDataBuffer()).getData();
-
             ByteBuffer directBuffer = ByteBuffer.allocateDirect(pixelData.length);
             directBuffer.order(ByteOrder.nativeOrder());
             directBuffer.put(pixelData);
             directBuffer.flip();
-            long tAlloc = System.nanoTime();
 
-            System.out.println("[AIImageController] Calling Rust Bridge...");
             JPyRustBridge bridge = new JPyRustBridge();
-            byte[] jpegData = bridge.processImage(workDir, directBuffer, pixelData.length, width, height, channels,
-                    requestId);
-            long tBridge = System.nanoTime();
-
-            if (jpegData == null) {
-                System.err.println("[AIImageController] Bridge returned null! | ID: " + requestId);
-                return ResponseEntity.internalServerError().build();
+            byte[] resultData;
+            
+            if ("EDGE".equals(mode)) {
+                resultData = bridge.processEdgeDetection(pixelData, bgrImage.getWidth(), bgrImage.getHeight(), 3);
+            } else {
+                resultData = bridge.processImage(workDir, directBuffer, pixelData.length, bgrImage.getWidth(), bgrImage.getHeight(), 3, requestId);
             }
 
-            long tEnd = System.nanoTime();
-
-            double totalMs = (tEnd - tStart) / 1_000_000.0;
-            double bridgeMs = (tBridge - tAlloc) / 1_000_000.0;
-
-            System.out.println(String.format(
-                    "[Timing] ID: %s | Total: %.0fms | Bridge: %.0f | JPEG: %.1fKB",
-                    requestId.substring(0, 8), totalMs, bridgeMs, jpegData.length / 1024.0));
-
-            return ResponseEntity.ok(jpegData);
+            if (resultData == null) return ResponseEntity.internalServerError().build();
+            return ResponseEntity.ok(resultData);
 
         } catch (Exception e) {
-            System.out.println("[AIImageController] Error | ID: " + requestId + " | " + e.getMessage());
             e.printStackTrace();
             return ResponseEntity.internalServerError().build();
         }

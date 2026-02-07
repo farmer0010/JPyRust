@@ -35,3 +35,16 @@ tasks.withType<Test> {
 tasks.withType<org.springframework.boot.gradle.tasks.run.BootRun> {
     systemProperty("java.library.path", file("../rust-bridge/target/release").absolutePath)
 }
+
+// 👇 Native DLL을 bootJar에 직접 포함
+tasks.named<org.springframework.boot.gradle.tasks.bundling.BootJar>("bootJar") {
+    // natives 폴더 포함
+    from(project(":java-api").file("src/main/resources/natives")) {
+        into("BOOT-INF/classes/natives")
+    }
+    // python_dist.zip 포함
+    from(project(":java-api").layout.buildDirectory.dir("generated/resources")) {
+        include("python_dist.zip")
+        into("BOOT-INF/classes")
+    }
+}

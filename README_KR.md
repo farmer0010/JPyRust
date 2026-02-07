@@ -238,12 +238,24 @@ cd ..
 
 ## 📜 버전 히스토리
 
+*   **v1.1 (최신)**:
+    *   **Observability**: `/api/status` 엔드포인트로 Python 데몬 상태 (RAM, GPU) 실시간 모니터링
+    *   **Plugin System**: `python-core/plugins/`에 파이썬 파일 추가 시 자동 로딩
+    *   **Docker Registry Guide**: GitHub Actions를 통한 Docker Hub 자동 배포 가이드 제공
 *   **v1.0 (공식 출시)**:
     *   **Universal Bridge Architecture**: Java-Rust-Python 하이브리드 아키텍처 완성
     *   **Intelligent IPC Selection**: 이미지(SHMEM) / 텍스트(FILE) 자동 최적화
     *   **Multi-OS Support**: Windows, Linux, macOS 동시 지원
     *   **Embedded Python**: 내장 파이썬 환경 및 의존성 자동 관리
     *   **GPU Auto-Detection**: NVIDIA GPU 자동 감지 및 가속
+
+---
+
+## 📅 향후 계획 (Roadmap)
+
+*   [ ] **Docker Registry Integration**: GitHub Release 시 자동으로 Docker Hub에 이미지 푸시 (현재 가이드 제공됨)
+*   [ ] **GPU Resource Managment**: GPU 메모리 사용량에 따른 동적 배치 처리
+*   [ ] **Hot-Reloading**: 서버 재시작 없이 Python 플러그인 실시간 갱신
 
 ---
 
