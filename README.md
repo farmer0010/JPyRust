@@ -19,7 +19,15 @@
 
 Unlike the slow `ProcessBuilder` or complex HTTP API approaches, it uses **Rust JNI** and a **Persistent Embedded Python Daemon** to guarantee near-native speed.
 
-**New in v2.4:** Intelligent IPC Mode Selection. Image processing uses **Shared Memory** for maximum performance, while text-based tasks (NLP, Regression) use **File IPC** for Windows compatibility.
+## 📜 Version History
+
+*   **v1.0 (Official Release)**:
+    *   Universal Bridge Architecture (Java-Rust-Python)
+    *   Intelligent IPC Selection (SHMEM for Images, File for Text)
+    *   Multi-OS Support (Windows, Linux, macOS)
+    *   Embedded Python & Auto-Dependency Management
+    *   GPU Auto-Detection
+
 
 ### 🚀 Why JPyRust? (Vs. Alternatives)
 
@@ -33,7 +41,7 @@ Unlike the slow `ProcessBuilder` or complex HTTP API approaches, it uses **Rust 
 
 ## ⚡ Performance Benchmarks
 
-| Metric | Traditional Way (ProcessBuilder) | 🚀 JPyRust (v2.4) | Improvement |
+| Metric | Traditional Way (ProcessBuilder) | 🚀 JPyRust (v1.0) | Improvement |
 |--------|:--------------------------------:|:-------------------:|:-----------:|
 | **Startup Overhead** | ~1,500ms (Boot Python VM) | **0ms** (Always Online) | **Infinite** |
 | **Object Detection (YOLO)** | ~2,000ms | **~100ms** (CPU) / **~40ms** (GPU) | 🔥 **50x Faster** |

@@ -17,7 +17,7 @@
 
 기존의 `ProcessBuilder` 방식은 느리고, HTTP API 방식은 관리가 복잡합니다. JPyRust는 **Rust JNI**와 **영속형 임베디드 Python 데몬(Persistent Embedded Python Daemon)**을 활용하여 네이티브 수준의 처리 속도를 보장합니다.
 
-**🔥 v2.4 업데이트:** 지능형 IPC 모드 선택 기능을 도입했습니다. 이미지 처리는 **공유 메모리(SHMEM)**로 성능을 극대화하고, 텍스트 기반 작업(NLP, Regression)은 **파일 IPC**를 사용하여 Windows 호환성을 완벽하게 보장합니다.
+**🔥 v1.0 정식 출시:** Java-Rust-Python 하이브리드 아키텍처가 완성되었습니다. 이미지 처리는 **공유 메모리(SHMEM)**로 초고속 처리를, 텍스트 작업은 **파일 IPC**로 안정성을 보장하는 **지능형 IPC 선택** 기술이 탑재되었습니다.
 
 ### 🚀 왜 JPyRust를 선택해야 할까요?
 
@@ -31,7 +31,7 @@
 
 ## ⚡ 성능 벤치마크
 
-| 테스트 항목 | 기존 방식 (CLI 호출) | 🚀 JPyRust (v2.4) | 개선율 |
+| 테스트 항목 | 기존 방식 (CLI 호출) | 🚀 JPyRust (v1.0) | 개선율 |
 |:---|:---:|:---:|:---:|
 | **초기 구동 지연** | ~1,500ms (매 호출마다 VM 시작) | **0ms** (상시 대기 프로세스) | **지연 없음** |
 | **객체 탐지 (YOLO)** | ~2,000ms | **~100ms** (CPU) / **~40ms** (GPU) | 🔥 **50배 향상** |
@@ -238,12 +238,12 @@ cd ..
 
 ## 📜 버전 히스토리
 
-* **v2.4**: **지능형 IPC 선택** - 이미지는 SHMEM, 텍스트는 File IPC (Windows 호환성 강화)
-* **v2.3**: Gradle 기반 내장 Python 자동 관리 및 의존성 패키지 자동 설치 구현.
-* **v2.2**: Full In-Memory Pipeline (입출력) 적용 및 GPU 자동 감지 기능 탑재.
-* **v2.1**: 입력 데이터 공유 메모리 적용 (Level 1).
-* **v2.0**: 내장 Python 자가 추출(Self-Extraction) 기능 추가.
-* **v1.0**: 초기 JNI + 파일 기반 IPC 구현.
+*   **v1.0 (공식 출시)**:
+    *   **Universal Bridge Architecture**: Java-Rust-Python 하이브리드 아키텍처 완성
+    *   **Intelligent IPC Selection**: 이미지(SHMEM) / 텍스트(FILE) 자동 최적화
+    *   **Multi-OS Support**: Windows, Linux, macOS 동시 지원
+    *   **Embedded Python**: 내장 파이썬 환경 및 의존성 자동 관리
+    *   **GPU Auto-Detection**: NVIDIA GPU 자동 감지 및 가속
 
 ---
 
