@@ -135,6 +135,18 @@ public class JPyRustBridge {
         pythonExe = pythonDistDir.resolve("python.exe");
     }
 
+    /**
+     * [Native Callback] Rust 프로세스에서 발생하는 로그를 Java로 전달받는 메서드입니다.
+     * 주의: Native 코드(Rust)에서 이 메서드 시그니처를 참조하므로 절대 삭제하거나 변경하면 안 됩니다.
+     *
+     * @param level 로그 레벨 (INFO, ERROR, DEBUG 등)
+     * @param msg   로그 메시지 내용
+     */
+    public static void log(String level, String msg) {
+        // 기본적으로 System.out으로 출력 (추후 SLF4J 등으로 확장 가능)
+        System.out.println("[JPyRust-Native] [" + level + "] " + msg);
+    }
+
     private static native void initNative(String workDir, String sourceScriptDir, String modelPath, float confidence,
             String memoryKey);
 

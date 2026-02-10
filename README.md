@@ -233,9 +233,9 @@ cd ..
 
 ## 📜 Version History
 
-*   **v1.1.1 (Hotfix)**:
+*   **v1.1.5 (Stable Release)**:
+    *   **JitPack Support**: Fixed build issues on JitPack (Gradle wrapper, sudo removal, Python task skipping).
     *   **Dynamic Shared Memory Key**: Fixed `WinError 5 (Access Denied)` on Windows restarts by using unique session UUIDs.
-*   **v1.1**:
     *   **Observability**: Real-time monitoring of Python daemon (RAM, GPU) via `/api/status`.
     *   **Plugin System**: Dynamic loading of Python extensions from `python-core/plugins/`.
     *   **Docker Registry Guide**: Detailed guide for automating Docker Hub deployments via GitHub Actions.
