@@ -57,6 +57,9 @@ val downloadPython = tasks.register("downloadEmbeddedPython") {
             }
         }
     }
+    
+    // Skip on JitPack to avoid unnecessary downloads
+    onlyIf { System.getenv("JITPACK") == null }
 }
 
 // 2. Download Wheels
@@ -85,6 +88,9 @@ val downloadWheels = tasks.register<Exec>("downloadWheels") {
         "--python-version", "311",
         "--only-binary=:all:"
     )
+    
+    // Skip on JitPack (no pip/python access usually)
+    onlyIf { System.getenv("JITPACK") == null }
 }
 
 // 3. Stage Python Environment (Assemble)
@@ -114,18 +120,12 @@ val stagePython = tasks.register<Copy>("stagePython") {
     into(pythonDistDir)
     
     // Post-processing: Enable 'import site' in python311._pth
-    doLast {
-        val distDir = pythonDistDir.get().asFile
-        val pthFile = distDir.listFiles { _, name -> name.endsWith("._pth") }?.firstOrNull()
-        
-        if (pthFile != null && pthFile.exists()) {
-            println("Patching ${pthFile.name} to enable site-packages...")
-            val content = pthFile.readText()
-            // Uncomment 'import site'
-            val newContent = content.replace("#import site", "import site")
             pthFile.writeText(newContent)
         }
     }
+    
+    // Skip on JitPack
+    onlyIf { System.getenv("JITPACK") == null }
 }
 
 // 4. Zip the Staged Directory
@@ -137,7 +137,11 @@ val zipPythonDist = tasks.register<Zip>("zipPythonDist") {
     archiveFileName.set("python_dist.zip")
     destinationDirectory.set(generatedResourcesDir)
     
+    
     from(pythonDistDir)
+    
+    // Skip on JitPack
+    onlyIf { System.getenv("JITPACK") == null }
 }
 
 // Task 4: Hook into processResources
