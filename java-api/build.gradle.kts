@@ -120,6 +120,15 @@ val stagePython = tasks.register<Copy>("stagePython") {
     into(pythonDistDir)
     
     // Post-processing: Enable 'import site' in python311._pth
+    doLast {
+        val distDir = pythonDistDir.get().asFile
+        val pthFile = distDir.listFiles { _, name -> name.endsWith("._pth") }?.firstOrNull()
+        
+        if (pthFile != null && pthFile.exists()) {
+            println("Patching ${pthFile.name} to enable site-packages...")
+            val content = pthFile.readText()
+            // Uncomment 'import site'
+            val newContent = content.replace("#import site", "import site")
             pthFile.writeText(newContent)
         }
     }
