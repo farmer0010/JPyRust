@@ -24,6 +24,7 @@ lazy_static! {
     static ref PYTHON_DAEMON: Mutex<Option<PythonDaemon>> = Mutex::new(None);
     static ref WORK_DIR: Mutex<Option<String>> = Mutex::new(None);
     static ref MODEL_CONFIG: Mutex<Option<(String, f32)>> = Mutex::new(None);
+    static ref SESSION_KEY: Mutex<Option<String>> = Mutex::new(None);
 }
 
 static mut JAVA_VM: Option<JavaVM> = None;
@@ -81,7 +82,8 @@ fn log_to_java(level: &str, msg: &str) {
 }
 
 fn find_python_executable(work_dir: &str) -> String {
-    let embedded_path = format!("{}/python/python.exe", work_dir);
+    // FIX: Directory is named 'python_dist' not 'python'
+    let embedded_path = format!("{}/python_dist/python.exe", work_dir);
     if std::path::Path::new(&embedded_path).exists() {
         return embedded_path;
     }
@@ -99,10 +101,22 @@ fn spawn_python_daemon(work_dir: &str) -> Result<PythonDaemon, String> {
     let script_path = format!("{}/ai_worker.py", work_dir);
 
     let mut child_cmd = Command::new(&python_exe);
-    let script_path = format!("{}/ai_worker.py", work_dir);
-
-    let mut child_cmd = Command::new(&python_exe);
     child_cmd.arg(&script_path).arg("--daemon");
+
+    // Pass session key
+    {
+        let key_guard = SESSION_KEY.lock().unwrap();
+        if let Some(key) = &*key_guard {
+             child_cmd.arg("--mem-key").arg(key);
+             log_to_java("INFO", &format!("[Rust] Passing Session Key to Python: {}", key));
+        }
+    }
+    
+    // [FIX] Enforce UTF-8 to prevent Windows CP949 crashes
+    child_cmd.env("PYTHONIOENCODING", "utf-8");
+    // [FIX] Ensure PYTHONPATH includes the work directory
+    child_cmd.env("PYTHONPATH", work_dir);
+
     {
         let config_guard = MODEL_CONFIG.lock().unwrap();
         if let Some((ref path, conf)) = *config_guard {
@@ -232,6 +246,7 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_initNative<'local>(
     _source_script_dir: JString<'local>,
     model_path: JString<'local>,
     confidence: jni::sys::jfloat,
+    memory_key: JString<'local>,
 ) {
     if let Ok(vm) = env.get_java_vm() {
         unsafe { JAVA_VM = Some(vm); }
@@ -259,14 +274,22 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_initNative<'local>(
     let model_path_str: String = env.get_string(&model_path)
         .expect("Failed to get model_path")
         .into();
+    
+    let memory_key_str: String = env.get_string(&memory_key)
+        .expect("Failed to get memory_key")
+        .into();
 
     log_to_java("INFO", &format!("[Rust Init] Work Directory: {}", work_dir_str));
     log_to_java("INFO", &format!("[Rust Init] Model Path: {}", model_path_str));
     log_to_java("INFO", &format!("[Rust Init] Confidence: {}", confidence));
+    log_to_java("INFO", &format!("[Rust Init] Session Key: {}", memory_key_str));
 
     {
         let mut config_guard = MODEL_CONFIG.lock().unwrap();
         *config_guard = Some((model_path_str, confidence));
+        
+        let mut key_guard = SESSION_KEY.lock().unwrap();
+        *key_guard = Some(memory_key_str);
     }
 
     match get_or_spawn_daemon(&work_dir_str) {
@@ -332,7 +355,12 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_executeTask<'local>(
 
     let data = unsafe { std::slice::from_raw_parts(buffer_ptr, length) };
 
-    let shm_name_in = format!("jpyrust_{}", &request_id_str[..8.min(request_id_str.len())]);
+    let session_key = {
+        let guard = SESSION_KEY.lock().unwrap();
+        guard.clone().unwrap_or_else(|| "jpyrust".to_string())
+    };
+
+    let shm_name_in = format!("{}_{}", session_key, &request_id_str[..8.min(request_id_str.len())]);
     
     let mut shm_in = match ShmemConf::new()
         .size(length)
@@ -354,7 +382,7 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_executeTask<'local>(
         shm_slice[..length].copy_from_slice(data);
     }
 
-    let shm_name_out = format!("jpyrust_out_{}", &request_id_str[..8.min(request_id_str.len())]);
+    let shm_name_out = format!("{}_out_{}", session_key, &request_id_str[..8.min(request_id_str.len())]);
     
     let shm_out = match ShmemConf::new()
         .size(OUTPUT_SHM_SIZE)

@@ -70,7 +70,11 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--daemon", action="store_true")
 parser.add_argument("--model", type=str, default="yolov8n.pt", help="Path to YOLO model")
 parser.add_argument("--conf", type=float, default=0.5, help="Confidence threshold")
+parser.add_argument("--mem-key", type=str, default=None, help="Shared Memory Session Key")
 args, unknown = parser.parse_known_args()
+
+if args.mem_key:
+    print(f"[Daemon] Initialized with Memory Session Key: {args.mem_key}", flush=True)
 
 WORK_DIR = "C:/jpyrust_temp"
 HEADER_SIZE = 4

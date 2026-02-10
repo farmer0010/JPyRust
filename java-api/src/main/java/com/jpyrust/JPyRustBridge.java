@@ -42,38 +42,10 @@ public class JPyRustBridge {
     }
 
     public synchronized static void initialize(String workDirectory, String ignoredSourceScript) {
-        if (initialized) {
-            return;
-        }
-
-        workDir = workDirectory;
-        // sourceScriptDir is no longer needed as we use the embedded one
-
-        System.out.println("=== JPyRust IPC Initialization ===");
-        System.out.println("[Init] Work Directory: " + workDir);
-
-        try {
-            Path workPath = Paths.get(workDir);
-            if (!Files.exists(workPath)) {
-                Files.createDirectories(workPath);
-            }
-
-            // 1. Setup Embedded Python
-            setupEmbeddedPython(workPath);
-
-            // 2. Initialize Native (if still needed for Shmem, otherwise this might be
-            // optional)
-            // Assuming initNative is still relevant for Shared Memory setup on Java side
-            // If the native lib expects just a dir, we pass it.
-            initNative(workDir, workDir, "yolov8n.pt", 0.5f); // Pass defaults for model and confidence
-
-            System.out.println("=== Initialization Complete ===");
-            initialized = true;
-
-        } catch (Exception e) {
-            e.printStackTrace();
-            throw new RuntimeException("Failed to initialize JPyRustBridge", e);
-        }
+        // Generate a unique session key for Shared Memory
+        String memoryKey = "JPyRust_" + java.util.UUID.randomUUID().toString();
+        System.out.println("[JPyRust] Generated Session Key (Default): " + memoryKey);
+        initialize(workDirectory, ignoredSourceScript, memoryKey);
     }
 
     private static void setupEmbeddedPython(Path targetDir) throws Exception {
@@ -163,12 +135,51 @@ public class JPyRustBridge {
         pythonExe = pythonDistDir.resolve("python.exe");
     }
 
-    private static native void initNative(String workDir, String sourceScriptDir, String modelPath, float confidence);
+    private static native void initNative(String workDir, String sourceScriptDir, String modelPath, float confidence,
+            String memoryKey);
 
     // 4-param initialize overload for AIImageController compatibility
     public static void initialize(String workDirectory, String sourceScript, String modelPath, float confidence) {
         System.out.println("[JPyRust] Init with model: " + modelPath + ", confidence: " + confidence);
-        initialize(workDirectory, sourceScript);
+
+        // Generate a unique session key for Shared Memory
+        String memoryKey = "JPyRust_" + java.util.UUID.randomUUID().toString();
+        System.out.println("[JPyRust] Generated Session Key: " + memoryKey);
+
+        initialize(workDirectory, sourceScript, memoryKey);
+    }
+
+    // Internal initialize with key
+    private synchronized static void initialize(String workDirectory, String ignoredSourceScript, String memoryKey) {
+        if (initialized) {
+            return;
+        }
+
+        workDir = workDirectory;
+        // sourceScriptDir is no longer needed as we use the embedded one
+
+        System.out.println("=== JPyRust IPC Initialization ===");
+        System.out.println("[Init] Work Directory: " + workDir);
+
+        try {
+            Path workPath = Paths.get(workDir);
+            if (!Files.exists(workPath)) {
+                Files.createDirectories(workPath);
+            }
+
+            // 1. Setup Embedded Python
+            setupEmbeddedPython(workPath);
+
+            // 2. Initialize Native
+            initNative(workDir, workDir, "yolov8n.pt", 0.5f, memoryKey);
+
+            System.out.println("=== Initialization Complete ===");
+            initialized = true;
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            throw new RuntimeException("Failed to initialize JPyRustBridge", e);
+        }
     }
 
     // Native executeTask declaration matching Rust signature
