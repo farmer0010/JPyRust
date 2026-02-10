@@ -233,7 +233,9 @@ cd ..
 
 ## 📜 Version History
 
-*   **v1.1 (Latest)**:
+*   **v1.1.1 (Hotfix)**:
+    *   **Dynamic Shared Memory Key**: Fixed `WinError 5 (Access Denied)` on Windows restarts by using unique session UUIDs.
+*   **v1.1**:
     *   **Observability**: Real-time monitoring of Python daemon (RAM, GPU) via `/api/status`.
     *   **Plugin System**: Dynamic loading of Python extensions from `python-core/plugins/`.
     *   **Docker Registry Guide**: Detailed guide for automating Docker Hub deployments via GitHub Actions.

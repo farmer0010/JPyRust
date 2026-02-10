@@ -238,7 +238,9 @@ cd ..
 
 ## 📜 버전 히스토리
 
-*   **v1.1 (최신)**:
+*   **v1.1.1 (Hotfix)**:
+    *   **Dynamic Shared Memory Key**: Windows 재시작 시 발생하는 `WinError 5 (Access Denied)` 문제를 고유 세션 UUID로 해결.
+*   **v1.1**:
     *   **Observability**: `/api/status` 엔드포인트로 Python 데몬 상태 (RAM, GPU) 실시간 모니터링
     *   **Plugin System**: `python-core/plugins/`에 파이썬 파일 추가 시 자동 로딩
     *   **Docker Registry Guide**: GitHub Actions를 통한 Docker Hub 자동 배포 가이드 제공
