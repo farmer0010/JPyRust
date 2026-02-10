@@ -15,26 +15,21 @@ import json
 
 APP_START_TIME = time.time()
 
-# --- Auto-Bootstrap Logic ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
 marker_file = os.path.join(current_dir, ".installed")
 
 if not os.path.exists(marker_file):
     print("[Daemon] First run detected. Bootstrapping dependencies...", flush=True)
     try:
-        # Save args
         original_argv = sys.argv[:]
         
         import bootstrap
         bootstrap.main()
         
-        # Restore args
         sys.argv = original_argv
         print("[Daemon] Bootstrap complete. Starting worker...", flush=True)
     except Exception as e:
         print(f"[Daemon] Bootstrap failed: {e}", flush=True)
-        # Continue anyway, imports might fail later
-# ----------------------------
 
 import numpy as np
 import cv2
@@ -130,8 +125,6 @@ def load_plugins():
              print(f"[Plugin] Failed to load {plugin_file}: {e}", flush=True)
 
 def parse_input_protocol(request_id, metadata, task_type=None):
-    # Hybrid IPC for text-based tasks: READ from SHMEM (Rust sends data there), 
-    # but force FILE OUTPUT (avoids Windows SHMEM write permission issues)
     TEXT_BASED_TASKS = {"NLP_TEXTBLOB", "SENTIMENT", "REGRESSION"}
     force_file_output = task_type and task_type.upper() in TEXT_BASED_TASKS
     
@@ -143,15 +136,12 @@ def parse_input_protocol(request_id, metadata, task_type=None):
             out_shm_name = metadata[3]
             out_cap = int(metadata[4])
             real_metadata = metadata[5:]
-            # For text tasks: ignore output SHMEM, use File instead
             out_info = None if force_file_output else (out_shm_name, out_cap)
         else:
             real_metadata = metadata[3:]
             out_info = None
 
         try:
-            # Retry mechanism for Windows Shared Memory Access Denied (WinError 5)
-            # Increased delay and attempts for more robust handling
             MAX_ATTEMPTS = 15
             for attempt in range(MAX_ATTEMPTS):
                 try:
@@ -161,7 +151,7 @@ def parse_input_protocol(request_id, metadata, task_type=None):
                     break
                 except PermissionError as e:
                     if attempt == MAX_ATTEMPTS - 1: raise e
-                    time.sleep(0.05 + attempt * 0.01)  # 50ms base + progressive delay
+                    time.sleep(0.05 + attempt * 0.01)
                 except FileNotFoundError as e:
                     if attempt == MAX_ATTEMPTS - 1: raise e
                     time.sleep(0.05 + attempt * 0.01)
@@ -316,7 +306,7 @@ def handle_enhanced_sentiment(request_id: str, raw_metadata: list) -> str:
         text = raw_data.decode('utf-8')
         
         blob = TextBlob(text)
-        sentiment_score = blob.sentiment.polarity # -1.0 to 1.0
+        sentiment_score = blob.sentiment.polarity 
         subjectivity = blob.sentiment.subjectivity
         
         if sentiment_score > 0.1:
@@ -340,7 +330,6 @@ def handle_regression_task(request_id: str, raw_metadata: list) -> str:
 
     try:
         raw_data, metadata, out_info = parse_input_protocol(request_id, raw_metadata, task_type="REGRESSION")
-        # Input: JSON string "[[1, 2], [2, 4], [3, 6]]"
         import json
         json_str = raw_data.decode('utf-8')
         data = json.loads(json_str)
@@ -376,7 +365,6 @@ def handle_edge_detection(request_id: str, raw_metadata: list) -> str:
         
         image = np.frombuffer(raw_data, dtype=np.uint8).reshape((height, width, channels))
         
-        # Canny Edge Detection
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         edges = cv2.Canny(gray, 100, 200)
         edges_bgr = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
@@ -419,7 +407,6 @@ def handle_status(request_id: str, raw_metadata: list) -> str:
             "active_plugins": [k for k in TASK_HANDLERS.keys() if k not in ["YOLO", "SENTIMENT", "NLP_TEXTBLOB", "REGRESSION", "EDGE_DETECT", "STATUS"]]
         }
         
-        # Determine output mode (same logic as text tasks: prefer FILE for JSON to be safe)
         _, _, out_info = parse_input_protocol(request_id, raw_metadata, task_type="STATUS")
         
         json_result = json.dumps(status)
@@ -432,7 +419,7 @@ def handle_status(request_id: str, raw_metadata: list) -> str:
 
 TASK_HANDLERS = {
     "YOLO": handle_yolo_task,
-    "SENTIMENT": handle_sentiment_task, # Legacy rule-based
+    "SENTIMENT": handle_sentiment_task, 
     "NLP_TEXTBLOB": handle_enhanced_sentiment,
     "REGRESSION": handle_regression_task,
     "EDGE_DETECT": handle_edge_detection,

@@ -14,7 +14,6 @@ public class AIController {
 
     @GetMapping("/chat")
     public Map<String, Object> chat(@RequestParam String message, @RequestParam int id) {
-        // ... legacy code ...
         return Map.of("status", "success", "python_response", "Text AI is under maintenance.");
     }
 
@@ -26,7 +25,6 @@ public class AIController {
 
     @PostMapping("/regression")
     public Map<String, Object> performRegression(@RequestBody String jsonPoints) {
-        // jsonPoints example: "[[1, 2], [2, 4], [3, 6]]"
         String result = bridge.processRegression(jsonPoints);
         return Map.of("result", result);
     }

@@ -47,7 +47,6 @@ public class AIImageController {
 
     @PostMapping(value = "/process-image", consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = MediaType.IMAGE_JPEG_VALUE)
     public ResponseEntity<byte[]> processImage(@RequestParam("file") MultipartFile file) {
-        // ... (keep existing YOLO logic) ...
         return processImageInternal(file, "YOLO");
     }
 
@@ -60,10 +59,11 @@ public class AIImageController {
         String requestId = UUID.randomUUID().toString();
         try {
             BufferedImage inputImage = ImageIO.read(file.getInputStream());
-            if (inputImage == null) return ResponseEntity.badRequest().build();
+            if (inputImage == null)
+                return ResponseEntity.badRequest().build();
 
-            // Convert to BGR (OpenCV standard)
-            BufferedImage bgrImage = new BufferedImage(inputImage.getWidth(), inputImage.getHeight(), BufferedImage.TYPE_3BYTE_BGR);
+            BufferedImage bgrImage = new BufferedImage(inputImage.getWidth(), inputImage.getHeight(),
+                    BufferedImage.TYPE_3BYTE_BGR);
             bgrImage.getGraphics().drawImage(inputImage, 0, 0, null);
 
             byte[] pixelData = ((DataBufferByte) bgrImage.getRaster().getDataBuffer()).getData();
@@ -74,14 +74,16 @@ public class AIImageController {
 
             JPyRustBridge bridge = new JPyRustBridge();
             byte[] resultData;
-            
+
             if ("EDGE".equals(mode)) {
                 resultData = bridge.processEdgeDetection(pixelData, bgrImage.getWidth(), bgrImage.getHeight(), 3);
             } else {
-                resultData = bridge.processImage(workDir, directBuffer, pixelData.length, bgrImage.getWidth(), bgrImage.getHeight(), 3, requestId);
+                resultData = bridge.processImage(workDir, directBuffer, pixelData.length, bgrImage.getWidth(),
+                        bgrImage.getHeight(), 3, requestId);
             }
 
-            if (resultData == null) return ResponseEntity.internalServerError().build();
+            if (resultData == null)
+                return ResponseEntity.internalServerError().build();
             return ResponseEntity.ok(resultData);
 
         } catch (Exception e) {

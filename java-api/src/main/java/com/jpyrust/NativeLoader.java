@@ -25,7 +25,6 @@ public class NativeLoader {
 
             String filename = libName + extension;
 
-            // Try multiple resource paths for Spring Boot compatibility
             String[] resourcePaths = {
                     "/natives/" + filename,
                     "natives/" + filename,
@@ -36,7 +35,6 @@ public class NativeLoader {
             InputStream is = null;
             String foundPath = null;
 
-            // Try class classloader first
             for (String path : resourcePaths) {
                 System.err.println("[NativeLoader] Checking path: " + path);
                 is = NativeLoader.class.getResourceAsStream(path);
@@ -47,7 +45,6 @@ public class NativeLoader {
                 }
             }
 
-            // Fallback to thread context classloader
             if (is == null) {
                 ClassLoader contextCL = Thread.currentThread().getContextClassLoader();
                 if (contextCL != null) {

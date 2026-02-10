@@ -82,7 +82,6 @@ fn log_to_java(level: &str, msg: &str) {
 }
 
 fn find_python_executable(work_dir: &str) -> String {
-    // FIX: Directory is named 'python_dist' not 'python'
     let embedded_path = format!("{}/python_dist/python.exe", work_dir);
     if std::path::Path::new(&embedded_path).exists() {
         return embedded_path;
@@ -103,7 +102,6 @@ fn spawn_python_daemon(work_dir: &str) -> Result<PythonDaemon, String> {
     let mut child_cmd = Command::new(&python_exe);
     child_cmd.arg(&script_path).arg("--daemon");
 
-    // Pass session key
     {
         let key_guard = SESSION_KEY.lock().unwrap();
         if let Some(key) = &*key_guard {
@@ -112,9 +110,7 @@ fn spawn_python_daemon(work_dir: &str) -> Result<PythonDaemon, String> {
         }
     }
     
-    // [FIX] Enforce UTF-8 to prevent Windows CP949 crashes
     child_cmd.env("PYTHONIOENCODING", "utf-8");
-    // [FIX] Ensure PYTHONPATH includes the work directory
     child_cmd.env("PYTHONPATH", work_dir);
 
     {
@@ -143,7 +139,7 @@ fn spawn_python_daemon(work_dir: &str) -> Result<PythonDaemon, String> {
 
     let mut ready_line = String::new();
     let timeout_start = std::time::Instant::now();
-    let timeout_duration = std::time::Duration::from_secs(600); // 10 min for first-time install
+    let timeout_duration = std::time::Duration::from_secs(600); 
 
     loop {
         if timeout_start.elapsed() > timeout_duration {
@@ -326,8 +322,6 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_executeTask<'local>(
 
     let length = input_length as usize;
 
-    // Use SHMEM only for high-bandwidth image tasks.
-    // Default to FILE for everything else (STATUS, PLUGINS, NLP) to avoid Windows permission issues.
     let shmem_tasks = ["YOLO", "EDGE_DETECT"];
     if !shmem_tasks.contains(&task_type_str.as_str()) {
         log_to_java("INFO", "[Rust] Text task detected - using FILE IPC for stability");

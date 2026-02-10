@@ -7,7 +7,6 @@ public class TestLoader {
     public void testLoading() {
         System.out.println("Testing JPyRustBridge Loading...");
         try {
-            // Force class loading to trigger static block
             Class.forName("com.jpyrust.JPyRustBridge");
             System.out.println("JPyRustBridge loaded successfully!");
 

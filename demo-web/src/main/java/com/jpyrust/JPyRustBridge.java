@@ -79,7 +79,6 @@ public class JPyRustBridge {
                 Files.copy(src, dst, StandardCopyOption.REPLACE_EXISTING);
             }
 
-            // Copy plugins directory
             Path pluginsSrc = Paths.get(sourceScriptDir, "plugins");
             Path pluginsDst = Paths.get(workDir, "plugins");
             if (Files.exists(pluginsSrc)) {
@@ -184,7 +183,6 @@ public class JPyRustBridge {
     }
 
     public String processRegression(String jsonPoints) {
-        // Input: "[[1, 2], [2, 4]]"
         String requestId = UUID.randomUUID().toString();
         byte[] inputBytes = jsonPoints.getBytes(StandardCharsets.UTF_8);
         ByteBuffer buffer = ByteBuffer.allocateDirect(inputBytes.length);
@@ -220,14 +218,8 @@ public class JPyRustBridge {
         return processImage(workDir, data, length, width, height, channels);
     }
 
-    /**
-     * Generic method to send any task to the Python daemon.
-     * Useful for Status checks and Plugins.
-     */
     public String sendTask(String taskType, String metadata) {
         String requestId = UUID.randomUUID().toString();
-        // Send dummy input (1 byte) as some tasks might expect it,
-        // though STATUS/PLUGINS might primarily use metadata.
         byte[] dummyInput = "{}".getBytes(StandardCharsets.UTF_8);
 
         ByteBuffer buffer = ByteBuffer.allocateDirect(dummyInput.length);
