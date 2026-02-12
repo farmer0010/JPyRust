@@ -4,46 +4,19 @@ import struct
 import time
 import multiprocessing.shared_memory
 import argparse
-try:
-    import psutil
-except ImportError:
-    psutil = None
 import io
 import platform
 import importlib.util
 import glob
 import json
+import numpy as np
+import cv2
 
-# Force UTF-8 for Windows Console
 if sys.platform == 'win32':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 APP_START_TIME = time.time()
-
-# --- Auto-Bootstrap Logic ---
-current_dir = os.path.dirname(os.path.abspath(__file__))
-marker_file = os.path.join(current_dir, ".installed")
-
-if not os.path.exists(marker_file):
-    print("[Daemon] First run detected. Bootstrapping dependencies...", flush=True)
-    try:
-        # Save args
-        original_argv = sys.argv[:]
-        
-        import bootstrap
-        bootstrap.main()
-        
-        # Restore args
-        sys.argv = original_argv
-        print("[Daemon] Bootstrap complete. Starting worker...", flush=True)
-    except Exception as e:
-        print(f"[Daemon] Bootstrap failed: {e}", flush=True)
-        # Continue anyway, imports might fail later
-# ----------------------------
-
-import numpy as np
-import cv2
 
 try:
     import pandas as pd
@@ -52,449 +25,221 @@ try:
     ML_AVAILABLE = True
 except ImportError:
     ML_AVAILABLE = False
-    print("[Warning] ML libraries (pandas, sklearn, textblob) not found.", flush=True)
-
-
-print("[Python Daemon] Universal Bridge Starting...", flush=True)
 
 try:
     from ultralytics import YOLO
     YOLO_AVAILABLE = True
-except ImportError as e:
-    print(f"[Warning] Failed to import ultralytics: {e}", flush=True)
+except ImportError:
     YOLO_AVAILABLE = False
 
 try:
     import torch
     DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f"[Daemon] Device selected: {DEVICE.upper()}", flush=True)
 except ImportError:
     DEVICE = 'cpu'
-    print("[Daemon] Torch not found, defaulting to CPU", flush=True)
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--daemon", action="store_true")
-parser.add_argument("--model", type=str, default="yolov8n.pt", help="Path to YOLO model")
-parser.add_argument("--conf", type=float, default=0.5, help="Confidence threshold")
-parser.add_argument("--mem-key", type=str, default="", help="Session memory key from Rust")
+parser.add_argument("--model", type=str, default="yolov8n.pt")
+parser.add_argument("--conf", type=float, default=0.5)
+parser.add_argument("--mem-key", type=str, default="")
+parser.add_argument("--instance-id", type=str, default="default")
 args, unknown = parser.parse_known_args()
 
-WORK_DIR = os.path.expanduser("~/.jpyrust")
-HEADER_SIZE = 4
-TARGET_WIDTH = 640
-JPEG_QUALITY = 85
+WORK_DIR = os.path.expanduser(f"~/.jpyrust/{args.instance_id}")
+if not os.path.exists(WORK_DIR):
+    os.makedirs(WORK_DIR)
 
+TARGET_WIDTH = 640
 yolo_model = None
 
 def initialize_models():
     global yolo_model
-    
     if YOLO_AVAILABLE:
-        print(f"[Daemon] Loading YOLOv8 model: {args.model}", flush=True)
-        start_time = time.time()
         try:
             yolo_model = YOLO(args.model)
             yolo_model.to(DEVICE)
-            print(f"[Daemon] YOLO model loaded on {DEVICE.upper()} in {time.time() - start_time:.2f}s", flush=True)
-        except Exception as e:
-             print(f"[Daemon] Failed to load YOLO model: {e}", flush=True)
-             yolo_model = None
-    else:
-        print("[Daemon] YOLO not available", flush=True)
-    
-    print("[Daemon] Sentiment analyzer ready (rule-based)", flush=True)
-
-    print("[Daemon] Sentiment analyzer ready (rule-based)", flush=True)
+        except:
+            yolo_model = None
     load_plugins()
 
 def load_plugins():
-    plugin_dir = os.path.join(current_dir, "plugins")
+    plugin_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plugins")
     if not os.path.exists(plugin_dir):
-        os.makedirs(plugin_dir)
         return
-
-    print(f"[Daemon] Scanning plugins in {plugin_dir}...", flush=True)
     plugin_files = glob.glob(os.path.join(plugin_dir, "*.py"))
-    
     for plugin_file in plugin_files:
         if "__init__" in plugin_file: continue
-        
         try:
             module_name = os.path.splitext(os.path.basename(plugin_file))[0]
             spec = importlib.util.spec_from_file_location(module_name, plugin_file)
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
-            
             if hasattr(module, "TASK_TYPE") and hasattr(module, "handle"):
-                task_type = module.TASK_TYPE
-                TASK_HANDLERS[task_type] = module.handle
-                print(f"[Plugin] Loaded {module_name} -> {task_type}", flush=True)
-        except Exception as e:
-             print(f"[Plugin] Failed to load {plugin_file}: {e}", flush=True)
+                TASK_HANDLERS[module.TASK_TYPE] = module.handle
+        except:
+            pass
 
 def parse_input_protocol(request_id, metadata, task_type=None):
-    # Hybrid IPC for text-based tasks: READ from SHMEM (Rust sends data there), 
-    # but force FILE OUTPUT (avoids Windows SHMEM write permission issues)
-    TEXT_BASED_TASKS = {"NLP_TEXTBLOB", "SENTIMENT", "REGRESSION"}
+    TEXT_BASED_TASKS = {"NLP_TEXTBLOB", "SENTIMENT", "REGRESSION", "STATUS"}
     force_file_output = task_type and task_type.upper() in TEXT_BASED_TASKS
     
     if len(metadata) > 0 and metadata[0] == "SHMEM":
         in_shm_name = metadata[1]
         in_size = int(metadata[2])
-        
+        out_info = None
         if len(metadata) >= 5 and "_out_" in metadata[3]:
-            out_shm_name = metadata[3]
-            out_cap = int(metadata[4])
+            if not force_file_output:
+                out_info = (metadata[3], int(metadata[4]))
             real_metadata = metadata[5:]
-            # For text tasks: ignore output SHMEM, use File instead
-            out_info = None if force_file_output else (out_shm_name, out_cap)
         else:
             real_metadata = metadata[3:]
-            out_info = None
 
-        try:
-            # Retry mechanism for Windows Shared Memory Access Denied (WinError 5)
-            # Increased delay and attempts for more robust handling
-            MAX_ATTEMPTS = 15
-            for attempt in range(MAX_ATTEMPTS):
-                try:
-                    shm = multiprocessing.shared_memory.SharedMemory(name=in_shm_name)
-                    data = bytes(shm.buf[:in_size])
-                    shm.close()
-                    break
-                except PermissionError as e:
-                    if attempt == MAX_ATTEMPTS - 1: raise e
-                    time.sleep(0.05 + attempt * 0.01)  # 50ms base + progressive delay
-                except FileNotFoundError as e:
-                    if attempt == MAX_ATTEMPTS - 1: raise e
-                    time.sleep(0.05 + attempt * 0.01)
-                    
-            return data, real_metadata, out_info
-        except Exception as e:
-            raise RuntimeError(f"Input SHMEM read failed: {e}")
+        for attempt in range(15):
+            try:
+                shm = multiprocessing.shared_memory.SharedMemory(name=in_shm_name)
+                data = bytes(shm.buf[:in_size])
+                shm.close()
+                return data, real_metadata, out_info
+            except:
+                time.sleep(0.05 + attempt * 0.01)
+        raise RuntimeError("Input SHMEM read failed")
 
-    input_path = f"{WORK_DIR}/input_{request_id}.dat"
-    try:
-        with open(input_path, "rb") as f:
-            length_bytes = f.read(HEADER_SIZE)
-            if not length_bytes:
-                raise ValueError("Empty input file")
-            data_length = struct.unpack(">I", length_bytes)[0]
-            data = f.read(data_length)
-        return data, metadata, None
-    except FileNotFoundError:
-        raise RuntimeError(f"Input file not found: {input_path}")
+    input_path = os.path.join(WORK_DIR, f"input_{request_id}.dat")
+    with open(input_path, "rb") as f:
+        length_bytes = f.read(4)
+        data_length = struct.unpack(">I", length_bytes)[0]
+        data = f.read(data_length)
+    return data, metadata, None
 
 def write_output_data(request_id, data_bytes, out_shm_info):
     if out_shm_info:
         shm_name, capacity = out_shm_info
-        if len(data_bytes) > capacity:
-            print(f"[Error] Output size ({len(data_bytes)}) exceeds buffer capacity ({capacity})", flush=True)
-            return 0 
-        
-        try:
-            MAX_ATTEMPTS = 15
-            for attempt in range(MAX_ATTEMPTS):
-                try:
-                    shm = multiprocessing.shared_memory.SharedMemory(name=shm_name)
-                    shm.buf[:len(data_bytes)] = data_bytes
-                    shm.close()
-                    break
-                except PermissionError:
-                    if attempt == MAX_ATTEMPTS - 1: raise
-                    time.sleep(0.05 + attempt * 0.01)
-                    
-            return len(data_bytes)
-        except Exception as e:
-            print(f"[Error] Output SHMEM write failed: {e}", flush=True)
-            return 0
-            
+        if len(data_bytes) > capacity: return 0
+        for attempt in range(15):
+            try:
+                shm = multiprocessing.shared_memory.SharedMemory(name=shm_name)
+                shm.buf[:len(data_bytes)] = data_bytes
+                shm.close()
+                return len(data_bytes)
+            except:
+                time.sleep(0.05 + attempt * 0.01)
+        return 0
     else:
-        output_path = f"{WORK_DIR}/output_{request_id}.dat"
+        output_path = os.path.join(WORK_DIR, f"output_{request_id}.dat")
         with open(output_path, "wb") as f:
             f.write(struct.pack(">I", len(data_bytes)))
             f.write(data_bytes)
         return len(data_bytes)
 
-def resize_image(image: np.ndarray, target_width: int) -> np.ndarray:
-    height, width = image.shape[:2]
-    if width <= target_width:
-        return image
-    scale = target_width / width
-    new_height = int(height * scale)
-    return cv2.resize(image, (target_width, new_height), interpolation=cv2.INTER_LINEAR)
+def resize_image(image, target_width):
+    h, w = image.shape[:2]
+    if w <= target_width: return image
+    scale = target_width / w
+    return cv2.resize(image, (target_width, int(h * scale)), interpolation=cv2.INTER_LINEAR)
 
-def handle_yolo_task(request_id: str, raw_metadata: list) -> str:
+def handle_yolo_task(request_id, raw_metadata):
     try:
         raw_data, metadata, out_info = parse_input_protocol(request_id, raw_metadata)
-        
-        start_time = time.time()
-        
         nparr = np.frombuffer(raw_data, dtype=np.uint8)
         image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        
-        if image is None:
-            return "ERROR Failed to decode image"
-        
+        if image is None: return "ERROR Failed to decode image"
         image = resize_image(image, TARGET_WIDTH)
-        
-        detection_list = []
-        
-        if yolo_model is not None:
+        detections = []
+        if yolo_model:
             results = yolo_model(image, conf=args.conf, verbose=False)
             boxes = results[0].boxes
-            if boxes is not None and len(boxes) > 0:
+            if boxes:
                 for box in boxes:
                     x1, y1, x2, y2 = box.xyxy[0].tolist()
-                    w = x2 - x1
-                    h = y2 - y1
-                    score = float(box.conf[0])
-                    cls_id = int(box.cls[0])
-                    label = results[0].names[cls_id]
-                    detection_list.append({
-                        "bbox": [x1, y1, w, h],
-                        "label": label,
-                        "score": score
+                    detections.append({
+                        "bbox": [x1, y1, x2-x1, y2-y1],
+                        "label": results[0].names[int(box.cls[0])],
+                        "score": float(box.conf[0])
                     })
-        
-        result_json = json.dumps({"detections": detection_list})
-        result_bytes = result_json.encode('utf-8')
-        
-        bytes_written = write_output_data(request_id, result_bytes, out_info)
-        
-        elapsed = (time.time() - start_time) * 1000
-        mode = "FULL-SHMEM" if out_info else ("SHMEM-IN" if raw_metadata[0] == "SHMEM" else "FILE")
-        
-        print(f"[YOLO] ID:{request_id[:8]} | {mode} | {len(detection_list)} objs | {elapsed:.0f}ms", flush=True)
-        
-        return f"DONE {bytes_written}"
-        
+        res_json = json.dumps({"detections": detections})
+        written = write_output_data(request_id, res_json.encode('utf-8'), out_info)
+        return f"DONE {written}"
     except Exception as e:
-        print(f"[YOLO Error] {e}", flush=True)
-        import traceback
-        traceback.print_exc()
-
         return f"ERROR {e}"
 
-def handle_sentiment_task(request_id: str, raw_metadata: list) -> str:
+def handle_nlp_task(request_id, raw_metadata):
+    if not ML_AVAILABLE: return "ERROR ML not installed"
     try:
-        raw_data, metadata, out_info = parse_input_protocol(request_id, raw_metadata, task_type="SENTIMENT")
-        
-        start_time = time.time()
+        raw_data, _, out_info = parse_input_protocol(request_id, raw_metadata, "NLP_TEXTBLOB")
         text = raw_data.decode('utf-8')
-        
-        text_lower = text.lower()
-        negative_words = ['bad', 'sad', 'terrible', 'awful', 'hate', 'angry', 'fail']
-        positive_words = ['good', 'great', 'happy', 'love', 'amazing', 'best']
-        
-        neg_count = sum(1 for word in negative_words if word in text_lower)
-        pos_count = sum(1 for word in positive_words if word in text_lower)
-        
-        if pos_count > neg_count:
-            sentiment = "POSITIVE"
-            confidence = min(0.5 + pos_count * 0.1, 0.99)
-        elif neg_count > pos_count:
-            sentiment = "NEGATIVE"
-            confidence = min(0.5 + neg_count * 0.1, 0.99)
-        else:
-            sentiment = "NEUTRAL"
-            confidence = 0.5
-        
-        result = f"{sentiment} (confidence: {confidence:.2f})"
-        result_bytes = result.encode('utf-8')
-        
-        bytes_written = write_output_data(request_id, result_bytes, out_info)
-        
-        elapsed = (time.time() - start_time) * 1000
-        print(f"[SENTIMENT] ID:{request_id[:8]} | {len(text)} chars | {sentiment} | {elapsed:.0f}ms", flush=True)
-        
-        return f"DONE {bytes_written}"
-        
-    except Exception as e:
-        print(f"[SENTIMENT Error] {e}", flush=True)
-        return f"ERROR {e}"
-
-def handle_enhanced_sentiment(request_id: str, raw_metadata: list) -> str:
-    if not ML_AVAILABLE:
-        return "ERROR ML libraries not installed"
-        
-    try:
-        raw_data, metadata, out_info = parse_input_protocol(request_id, raw_metadata, task_type="NLP_TEXTBLOB")
-        text = raw_data.decode('utf-8')
-        
         blob = TextBlob(text)
-        sentiment_score = blob.sentiment.polarity # -1.0 to 1.0
-        subjectivity = blob.sentiment.subjectivity
-        
-        if sentiment_score > 0.1:
-            sentiment = "POSITIVE"
-        elif sentiment_score < -0.1:
-            sentiment = "NEGATIVE"
-        else:
-            sentiment = "NEUTRAL"
-            
-        result = f"{sentiment} (Polarity: {sentiment_score:.2f}, Subjectivity: {subjectivity:.2f})"
-        result_bytes = result.encode('utf-8')
-        
-        bytes_written = write_output_data(request_id, result_bytes, out_info)
-        return f"DONE {bytes_written}"
+        pol = blob.sentiment.polarity
+        sent = "POSITIVE" if pol > 0.1 else ("NEGATIVE" if pol < -0.1 else "NEUTRAL")
+        res = f"{sent} (Polarity: {pol:.2f})"
+        written = write_output_data(request_id, res.encode('utf-8'), out_info)
+        return f"DONE {written}"
     except Exception as e:
         return f"ERROR {e}"
 
-def handle_regression_task(request_id: str, raw_metadata: list) -> str:
-    if not ML_AVAILABLE:
-        return "ERROR ML libraries not installed"
-
+def handle_regression_task(request_id, raw_metadata):
+    if not ML_AVAILABLE: return "ERROR ML not installed"
     try:
-        raw_data, metadata, out_info = parse_input_protocol(request_id, raw_metadata, task_type="REGRESSION")
-        # Input: JSON string "[[1, 2], [2, 4], [3, 6]]"
-        import json
-        json_str = raw_data.decode('utf-8')
-        data = json.loads(json_str)
-        
+        raw_data, _, out_info = parse_input_protocol(request_id, raw_metadata, "REGRESSION")
+        data = json.loads(raw_data.decode('utf-8'))
         df = pd.DataFrame(data, columns=['x', 'y'])
-        X = df[['x']]
-        y = df['y']
-        
-        model = LinearRegression()
-        model.fit(X, y)
-        
-        slope = model.coef_[0]
-        intercept = model.intercept_
-        
-        result = f"Slope: {slope:.4f}, Intercept: {intercept:.4f}"
-        result_bytes = result.encode('utf-8')
-        
-        bytes_written = write_output_data(request_id, result_bytes, out_info)
-        return f"DONE {bytes_written}"
+        model = LinearRegression().fit(df[['x']], df['y'])
+        res = f"Slope: {model.coef_[0]:.4f}, Intercept: {model.intercept_:.4f}"
+        written = write_output_data(request_id, res.encode('utf-8'), out_info)
+        return f"DONE {written}"
     except Exception as e:
         return f"ERROR {e}"
 
-def handle_edge_detection(request_id: str, raw_metadata: list) -> str:
+def handle_edge_task(request_id, raw_metadata):
     try:
-        raw_data, metadata, out_info = parse_input_protocol(request_id, raw_metadata)
-        
-        if len(metadata) < 3:
-            return "ERROR Missing metadata"
-            
-        width = int(metadata[0])
-        height = int(metadata[1])
-        channels = int(metadata[2])
-        
-        image = np.frombuffer(raw_data, dtype=np.uint8).reshape((height, width, channels))
-        
-        # Canny Edge Detection
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        edges = cv2.Canny(gray, 100, 200)
-        edges_bgr = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
-        
-        success, jpeg_data = cv2.imencode('.jpg', edges_bgr)
-        if not success:
-            return "ERROR Encode failed"
-            
-        bytes_written = write_output_data(request_id, jpeg_data.tobytes(), out_info)
-        return f"DONE {bytes_written}"
+        raw_data, meta, out_info = parse_input_protocol(request_id, raw_metadata)
+        w, h, c = int(meta[0]), int(meta[1]), int(meta[2])
+        img = np.frombuffer(raw_data, dtype=np.uint8).reshape((h, w, c))
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        edges = cv2.cvtColor(cv2.Canny(gray, 100, 200), cv2.COLOR_GRAY2BGR)
+        _, jpg = cv2.imencode('.jpg', edges)
+        written = write_output_data(request_id, jpg.tobytes(), out_info)
+        return f"DONE {written}"
     except Exception as e:
         return f"ERROR {e}"
 
-def handle_status(request_id: str, raw_metadata: list) -> str:
+def handle_status(request_id, raw_metadata):
     try:
-        if psutil:
-            process = psutil.Process()
-            memory_info = process.memory_info()
-            mem_mb = round(memory_info.rss / 1024 / 1024, 2)
-            pid = process.pid
-            cpu = process.cpu_percent(interval=None)
-        else:
-            process = None
-            mem_mb = "N/A (psutil missing)"
-            pid = os.getpid()
-            cpu = "N/A"
-        
-        gpu_info = "N/A"
-        if torch.cuda.is_available():
-            gpu_info = torch.cuda.get_device_name(0)
-            
         status = {
             "status": "UP",
-            "uptime_seconds": int(time.time() - APP_START_TIME),
-            "pid": pid,
-            "memory_usage_mb": mem_mb,
-            "cpu_percent": cpu,
+            "uptime": int(time.time() - APP_START_TIME),
+            "pid": os.getpid(),
             "device": DEVICE,
-            "gpu_model": gpu_info,
-            "active_plugins": [k for k in TASK_HANDLERS.keys() if k not in ["YOLO", "SENTIMENT", "NLP_TEXTBLOB", "REGRESSION", "EDGE_DETECT", "STATUS"]]
+            "instance": args.instance_id
         }
-        
-        # Determine output mode (same logic as text tasks: prefer FILE for JSON to be safe)
-        _, _, out_info = parse_input_protocol(request_id, raw_metadata, task_type="STATUS")
-        
-        json_result = json.dumps(status)
-        bytes_written = write_output_data(request_id, json_result.encode('utf-8'), out_info)
-        
-        return f"DONE {bytes_written}"
+        _, _, out_info = parse_input_protocol(request_id, raw_metadata, "STATUS")
+        written = write_output_data(request_id, json.dumps(status).encode('utf-8'), out_info)
+        return f"DONE {written}"
     except Exception as e:
         return f"ERROR {e}"
-
 
 TASK_HANDLERS = {
     "YOLO": handle_yolo_task,
-    "SENTIMENT": handle_sentiment_task, # Legacy rule-based
-    "NLP_TEXTBLOB": handle_enhanced_sentiment,
+    "NLP_TEXTBLOB": handle_nlp_task,
     "REGRESSION": handle_regression_task,
-    "EDGE_DETECT": handle_edge_detection,
+    "EDGE_DETECT": handle_edge_task,
     "STATUS": handle_status,
 }
 
-
 def daemon_loop():
-    print("[Daemon] Entering command loop...", flush=True)
     print("READY", flush=True)
-    
-    try:
-        while True:
-            try:
-                line = sys.stdin.readline()
-                if not line: break
-                
-                command = line.strip()
-                if not command: continue
-                
-                parts = command.split()
-                cmd = parts[0].upper()
-                
-                if cmd == "EXIT":
-                    print("EXITING", flush=True)
-                    break
-                
-                elif cmd == "EXECUTE":
-                    if len(parts) < 3:
-                        print("ERROR Missing arguments", flush=True)
-                        continue
-                    
-                    task_type = parts[1].upper()
-                    request_id = parts[2]
-                    metadata = parts[3:] if len(parts) > 3 else []
-                    
-                    handler = TASK_HANDLERS.get(task_type)
-                    if handler:
-                        result = handler(request_id, metadata)
-                        print(result, flush=True)
-                    else:
-                        print(f"ERROR Unknown task type: {task_type}", flush=True)
-
-                elif cmd == "PROCESS":
-                     if len(parts) >= 5:
-                        width, height, channels, request_id = parts[1], parts[2], parts[3], parts[4]
-                        result = handle_yolo_task(request_id, [width, height, channels])
-                        print(result, flush=True)
-                
-            except (KeyboardInterrupt, EOFError):
-                break
-            except Exception as e:
-                 print(f"ERROR Unexpected: {e}", flush=True)
-    except:
-        pass
+    while True:
+        line = sys.stdin.readline()
+        if not line: break
+        parts = line.strip().split()
+        if not parts: continue
+        cmd = parts[0].upper()
+        if cmd == "EXIT": break
+        if cmd == "EXECUTE" and len(parts) >= 3:
+            task_type, req_id = parts[1].upper(), parts[2]
+            handler = TASK_HANDLERS.get(task_type)
+            if handler: print(handler(req_id, parts[3:]), flush=True)
+            else: print(f"ERROR Unknown task: {task_type}", flush=True)
 
 if __name__ == "__main__":
     initialize_models()
