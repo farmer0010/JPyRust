@@ -2,199 +2,209 @@
 
 > **"The Ultimate Python AI Integration for Java: Reducing 7s latency to 0.04s."**
 
-![Build Status](https://img.shields.io/github/actions/workflow/status/farmer0010/JPyRust/build.yml?style=flat-square&logo=github&label=Build)
-![Release](https://img.shields.io/github/v/release/farmer0010/JPyRust?style=flat-square&color=blue&label=Release)
-![License](https://img.shields.io/github/license/farmer0010/JPyRust?style=flat-square&color=green)
-[![Java](https://img.shields.io/badge/Java-17+-orange?logo=openjdk)](https://openjdk.org/)
-[![Rust](https://img.shields.io/badge/Rust-1.70+-orange?logo=rust)](https://www.rust-lang.org/)
-[![Python](https://img.shields.io/badge/Python-3.11-blue?logo=python)](https://www.python.org/)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/farmer0010/JPyRust/build.yml?style=flat-square&logo=github&label=Build)](https://github.com/farmer0010/JPyRust/actions)
+[![Release](https://img.shields.io/github/v/release/farmer0010/JPyRust?style=flat-square&color=blue&label=Release)](https://jitpack.io/#farmer0010/JPyRust)
+[![License](https://img.shields.io/github/license/farmer0010/JPyRust?style=flat-square&color=green)](LICENSE)
+![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-lightgrey?style=flat-square)
 
-[🇰🇷 한국어 버전 (Korean Version)](README_KR.md)
+<p align="center">
+  <a href="https://openjdk.org/">
+    <img src="https://img.shields.io/badge/Java-17+-orange?logo=openjdk&style=for-the-badge" alt="Java">
+  </a>
+  <a href="https://www.rust-lang.org/">
+    <img src="https://img.shields.io/badge/Rust-1.70+-orange?logo=rust&style=for-the-badge" alt="Rust">
+  </a>
+  <a href="https://www.python.org/">
+    <img src="https://img.shields.io/badge/Python-3.11-blue?logo=python&style=for-the-badge" alt="Python">
+  </a>
+</p>
+
+<div align="center">
+  <a href="README_KR.md">🇰🇷 한국어 버전 (Korean Version)</a>
+</div>
 
 ---
 
 ## 💡 Introduction
 
-**JPyRust** is a hybrid architecture that enables **Spring Boot** and Java applications to run Python AI models (YOLO, PyTorch, TensorFlow, etc.) in **real-time with high performance**.
+**JPyRust** is a hybrid architecture designed to bridge the gap between **Java's robustness** and **Python's AI ecosystem**. It enables Spring Boot applications to execute heavy AI models (YOLO, PyTorch, TensorFlow) with **near-native performance**.
 
-Unlike the slow `ProcessBuilder` or complex HTTP API approaches, JPyRust uses **Rust JNI** and a **Persistent Embedded Python Daemon** to guarantee near-native speed.
+Unlike slow `ProcessBuilder` or high-latency HTTP APIs, JPyRust leverages **Rust JNI** and **Shared Memory (SHMEM)** to achieve sub-millisecond communication.
 
-## 🚀 Key Features (v1.3.0)
-
-- **Multi-Instance Support**: Run multiple independent Python workers (e.g., `cam1`, `cam2`) concurrently within a single Java application.
-- **Zero-Static Architecture**: Fully object-oriented API for isolated instance management.
-- **Hybrid IPC**: Blazing fast Shared Memory (SHMEM) for heavy data (images/tensors) and reliable File/Pipe IPC for configuration.
-- **Cross-Platform**: Optimized for Windows (permisive SHMEM) and Linux.
-- **Embedded Python**: Automatically manages an isolated Python environment, no manual setup required.
-
-## ⚡ Performance
-
-| Feature | Local Command Line | HTTP API (FastAPI) | **JPyRust** |
-| :--- | :---: | :---: | :---: |
-| **Latency** | 🔴 Slow (VM Startup) | 🟡 Medium (Network) | 🟢 **Instant (Shared Memory)** |
-| **Start Overhead**| ~1,500ms | 0ms (Once started) | **0ms** (Persistent Daemon) |
-| **YOLO Detect** | ~2,000ms | ~100ms | **~40ms** (GPU) |
-| **Throughput** | Sequential | Concurrent (Complex) | **True Parallel (Multi-Instance)** |
-
----
-
-## 🚀 Quick Start
-
-### 1. Dependency
-```kotlin
-implementation("com.github.farmer0010:JPyRust:v1.3.0")
-```
-
-### 2. Multi-Instance Usage
-
-```java
-import com.jpyrust.JPyRustBridge;
-
-public class Main {
-    public static void main(String[] args) {
-        // 1. Create independent instances with unique IDs
-        // Each instance manages its own Rust context and Python process
-        JPyRustBridge cam1 = new JPyRustBridge("cam1");
-        JPyRustBridge cam2 = new JPyRustBridge("cam2");
-
-        // 2. Initialize (Spawns independent Python processes in ~/.jpyrust/camX)
-        // You can specify a custom working directory if needed
-        cam1.initialize(); 
-        cam2.initialize(); 
-
-        // 3. Process data concurrently
-        // Camera 1: YOLO Object Detection
-        byte[] res1 = cam1.processImage(buffer1, len1, 640, 480, 3);
-        
-        // Camera 2: YOLO Object Detection
-        byte[] res2 = cam2.processImage(buffer2, len2, 640, 480, 3);
-        
-        // 4. NLP Task
-        JPyRustBridge nlp = new JPyRustBridge("nlp");
-        nlp.initialize();
-        String sentiment = nlp.processNlp("JPyRust is blazing fast!");
-    }
-}
-```
-
-### 3. Instance Lifecycle
-Each `JPyRustBridge` object corresponds to a unique:
-- **Rust `BridgeState` Struct**: Holds handles to the Python process and IPC pipes.
-- **Python Process**: Runs independently.
-- **Working Directory**: `~/.jpyrust/<instance_id>/` ensuring no file conflicts.
+### 🌟 Why JPyRust?
+* 🚀 **Zero-Latency**: Uses System RAM (Shared Memory) instead of HTTP/Sockets.
+* 🔄 **True Parallelism**: v1.3.0 supports **Multi-Instance** architecture (1 Java App connects to N Python Processes).
+* 🛠️ **Zero-Config**: Auto-installs a secluded Embedded Python environment. No `pip install` hell.
+* 🛡️ **Crash-Proof**: Rust monitors Python health and auto-restarts workers if they crash.
 
 ---
 
 ## 🏗️ Architecture (v1.3.0)
 
-JPyRust v1.3.0 abandoned the global static singleton pattern in favor of a robust pointer-based object system. This allows for true parallelism and isolation.
+With the **v1.3.0 update**, JPyRust has moved from a generic Singleton pattern to a **Multi-Instance Object-Oriented Architecture**. This allows a single Java application to control multiple independent AI workers (e.g., Multi-Channel CCTV processing).
 
-### Component Diagram
+### 🧩 System Component Diagram
 
 ```mermaid
 graph TD
-    subgraph "Java Layer (Multi-Instance)"
-        J1["JPyRustBridge (ID: cam1)"]
-        J2["JPyRustBridge (ID: cam2)"]
+    subgraph JavaApp [☕ Java Application Layer]
+        style JavaApp fill:#f9f2f4,stroke:#333,stroke-width:2px
+        J1["Camera 1 Bridge<br>(Instance ID: cam1)"]
+        J2["Camera 2 Bridge<br>(Instance ID: cam2)"]
     end
 
-    subgraph "Rust Layer (JNI Native Context)"
-        R1["BridgeState { child_proc, pipes }"]
-        R2["BridgeState { child_proc, pipes }"]
+    subgraph NativeLayer [🦀 Rust JNI Layer]
+        style NativeLayer fill:#e8f4f8,stroke:#333,stroke-width:2px
+        R1["BridgeState A<br>{Ptr: 0x7FA...}"]
+        R2["BridgeState B<br>{Ptr: 0x81B...}"]
     end
 
-    subgraph "Python Layer (Isolated Processes)"
-        P1["Python Daemon (PID: 1001)"]
-        P2["Python Daemon (PID: 1002)"]
+    subgraph PythonLayer [🐍 Embedded Python Layer]
+        style PythonLayer fill:#edfbec,stroke:#333,stroke-width:2px
+        P1["Python Worker A<br>(PID: 1001)"]
+        P2["Python Worker B<br>(PID: 1002)"]
     end
 
-    J1 -- "nativePtr (0x7f...)" --> R1
-    J2 -- "nativePtr (0x8a...)" --> R2
+    J1 -- "JNI Call (nativePtr)" --> R1
+    J2 -- "JNI Call (nativePtr)" --> R2
     
-    R1 -- IPC (Pipes/Shmem) --> P1
-    R2 -- IPC (Pipes/Shmem) --> P2
+    R1 <== "⚡ SHMEM (Images)" ==> P1
+    R2 <== "⚡ SHMEM (Images)" ==> P2
+    
+    P1 -- "JSON Result" --> R1
+    P2 -- "JSON Result" --> R2
 ```
 
-### Execution Flow (Sequence)
+### ⚡ Execution Sequence
 
 ```mermaid
 sequenceDiagram
-    participant Java as Java (Main)
-    participant JNI as Rust (JNI)
-    participant Py as Python Daemon
+    participant Java as ☕ Java (Spring)
+    participant Rust as 🦀 Rust (JNI)
+    participant Py as 🐍 Python (Worker)
 
-    Java->>JNI: new JPyRustBridge("cam1").initialize()
-    JNI->>JNI: Allocate BridgeState
-    JNI->>Py: Spawn Process (arg: --instance-id cam1)
-    Py->>Py: Setup ~/.jpyrust/cam1
-    Py-->>JNI: "READY"
-    JNI-->>Java: return nativePtr
-    
-    Java->>JNI: processImage(ptr, image_data)
-    JNI->>JNI: Restore BridgeState from ptr
-    JNI->>Py: Write to SharedMemory & Send Command
-    Py->>Py: YOLO Inference
-    Py-->>JNI: Return Result JSON
-    JNI-->>Java: return byte[]
+    Note over Java, Py: Initialization Phase
+    Java->>Rust: new JPyRustBridge("cam1").initialize()
+    Rust->>Rust: Allocate BridgeState (Heap)
+    Rust->>Py: Spawn Process (arg: --instance-id cam1)
+    Py->>Py: Setup ~/.jpyrust/cam1/
+    Py-->>Rust: Signal "READY"
+    Rust-->>Java: Return nativePtr (Handle)
+
+    Note over Java, Py: Inference Phase (Loop)
+    Java->>Rust: processImage(ptr, image_bytes)
+    Rust->>Rust: Write to Shared Memory
+    Rust->>Py: Send Signal (IPC)
+    Py->>Py: Read SHMEM -> YOLO Inference
+    Py-->>Rust: Return JSON Result
+    Rust-->>Java: Return Result String
 ```
 
 ---
 
-## 🎯 Supported Tasks
+## ⚡ Performance Benchmark
 
-The library comes with built-in support for the following tasks, but is easily extensible via plugins.
+| Architecture | Communication | Latency (Avg) | Throughput | Stability |
+| :--- | :--- | :---: | :---: | :---: |
+| **CLI (ProcessBuilder)** | Stdin/Stdout | ~1,500ms | 🔴 Low | 🔴 Low (JVM Blocking) |
+| **HTTP (FastAPI/Flask)** | REST API | ~100ms | 🟡 Medium | 🟢 High |
+| **JPyRust v1.3.0** | **Shared Memory** | **🟢 ~40ms** | **🟢 High (Parallel)** | **🟢 High (Isolated)** |
 
-| Task | Method | IPC Mode | Library |
-|------|--------|----------|---------|
-| 🔍 **Object Detection** | `processImage(...)` | SHMEM | `Ultralytics (YOLOv8)` |
-| 🧠 **NLP Analysis** | `processNlp(...)` | FILE | `TextBlob` |
-| 📈 **Regression** | `processRegression(...)` | FILE | `Scikit-Learn` |
-| 🎨 **Edge Detection** | `processEdgeDetection(...)` | SHMEM | `OpenCV` |
-
----
-
-## ⚠️ Hardware Acceleration
-
-JPyRust automatically detects your hardware:
-- **NVIDIA GPU**: Used if CUDA is available (~40ms inference).
-- **CPU Fallback**: Used if no GPU is found (~100ms inference).
-
-No manual configuration is required. The Python daemon self-configures on startup.
+> *Benchmark Env: Ryzen 5 5600X, 32GB RAM, NVIDIA RTX 3060, YOLOv8n Model*
 
 ---
 
-## 🔧 Troubleshooting
+## 🚀 Quick Start
 
-### Common Issues
+### 1. Installation (Gradle)
+Add the JitPack repository and dependency to your `build.gradle.kts`:
 
-1. **`UnsatisfiedLinkError`**:
-   - Ensure `jpyrust.dll` (Windows) or `libjpyrust.so` (Linux) is in `java.library.path`.
-   - Run `cargo build --release` in `rust-bridge` if building from source.
+```kotlin
+repositories {
+    maven { url = uri("[https://jitpack.io](https://jitpack.io)") }
+}
 
-2. **`WinError 5 (Access Denied)`**:
-   - v1.3.0 handles this with isolated instance directories. Ensure your antivirus isn't blocking the `.jpyrust` folder.
+dependencies {
+    // Latest stable version
+    implementation("com.github.farmer0010:JPyRust:v1.3.0")
+}
+```
 
-3. **Python Daemon Exits Immediately**:
-   - Check `~/.jpyrust/<id>/logs` (if enabled) or run with `debug=true`.
-   - Ensure Python 3.11+ is installed or allow JPyRust to bootstrap it.
+### 2. Usage (Java)
+
+**Important:** As of v1.3.0, static methods are removed. You must instantiate `JPyRustBridge`.
+
+```java
+import com.jpyrust.JPyRustBridge;
+
+public class VisionService {
+    
+    public void startDetection() {
+        // 1. Create independent instances for each camera
+        JPyRustBridge cam1 = new JPyRustBridge("cam1");
+        JPyRustBridge cam2 = new JPyRustBridge("cam2");
+
+        // 2. Initialize (Spawns workers in ~/.jpyrust/camX)
+        cam1.initialize(); 
+        cam2.initialize(); 
+
+        // 3. Process Images (Thread-Safe)
+        // arg: (imageData, length, width, height, channels)
+        byte[] result1 = cam1.processImage(imgData1, len1, 640, 480, 3);
+        byte[] result2 = cam2.processImage(imgData2, len2, 640, 480, 3);
+        
+        System.out.println("Cam1 Result: " + new String(result1));
+    }
+}
+```
+
+---
+
+## 🛠️ Configuration & Troubleshooting
+
+<details>
+<summary><strong>🔧 1. UnsatisfiedLinkError / DLL Not Found</strong></summary>
+
+* **Cause:** Java cannot find the native library.
+* **Fix:** The library is automatically extracted to `AppData/Local/Temp`. If it fails, ensure `jpyrust.dll` (Windows) or `libjpyrust.so` (Linux) is in your library path.
+</details>
+
+<details>
+<summary><strong>🛡️ 2. WinError 5 (Access Denied)</strong></summary>
+
+* **Cause:** Windows Security permissions on Shared Memory.
+* **Fix:** JPyRust v1.2+ uses explicit `SECURITY_ATTRIBUTES` with SDDL `D:(A;;GA;;;WD)` to allow Full Access to the Python child process. No manual action required.
+</details>
+
+<details>
+<summary><strong>🐍 3. Python Dependency Issues</strong></summary>
+
+* JPyRust includes a **portable embedded Python**. It bootstraps itself in `~/.jpyrust/python_dist`.
+* If libraries are missing, check `requirements.txt` in the resource folder.
+</details>
 
 ---
 
 ## 📜 Version History
 
-*   **v1.3.0 (Current)**:
-    *   **Multi-Instance Support**: Concurrent Python workers.
-    *   **Refactored Core**: Removed all static state.
-    *   **API Update**: `new JPyRustBridge(id)` constructor.
+* **v1.3.0 (Latest)** 🚀
+    * **Major Refactor:** Switched to Multi-Instance Architecture.
+    * **Breaking Change:** Removed static methods; added Constructor-based instantiation.
+    * **Feature:** Isolated working directories per instance (`~/.jpyrust/cam1`).
 
-*   **v1.1.5**:
-    *   Fixed `WinError 5` with dynamic shared memory keys.
-    *   Added plugin system.
+* **v1.2.0**
+    * **Performance:** Restored Shared Memory (SHMEM) on Windows via Win32 API.
+    * **Security:** Fixed `WinError 5` using custom Security Descriptors.
 
-*   **v1.0.0**: 
-    *   Initial release with Universal Bridge Architecture.
+* **v1.1.0**
+    * Initial Windows Support & File-based IPC fallback.
 
 ---
 
 ## 📄 License
-MIT License
+
+This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+
+<div align="center">
+  <sub>Built with 🦀 Rust & ☕ Java by Farmer0010 (JPyRust Team).</sub>
+</div>
