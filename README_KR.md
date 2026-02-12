@@ -1,273 +1,210 @@
-# 🚀 JPyRust: 고성능 유니버설 Java-Python AI 브리지
+# 🚀 JPyRust: 고성능 유니버설 AI 브리지
 
-> **"Java 생태계를 위한 가장 빠르고 강력한 Python AI 통합 솔루션: 레이턴시 7초 ➔ 0.04초 혁신"**
+> **"Java를 위한 궁극의 Python AI 통합 솔루션: 7초 지연 시간을 0.04초로 단축."**
 
-![Build Status](https://img.shields.io/github/actions/workflow/status/farmer0010/JPyRust/build.yml?style=flat-square&logo=github&label=Build)
-![Release](https://img.shields.io/github/v/release/farmer0010/JPyRust?style=flat-square&color=blue&label=Release)
-![License](https://img.shields.io/github/license/farmer0010/JPyRust?style=flat-square&color=green)
-[![Java](https://img.shields.io/badge/Java-17+-orange?logo=openjdk)](https://openjdk.org/)
-[![Rust](https://img.shields.io/badge/Rust-1.70+-orange?logo=rust)](https://www.rust-lang.org/)
-[![Python](https://img.shields.io/badge/Python-3.11-blue?logo=python)](https://www.python.org/)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/farmer0010/JPyRust/build.yml?style=flat-square&logo=github&label=Build)](https://github.com/farmer0010/JPyRust/actions)
+[![Release](https://img.shields.io/github/v/release/farmer0010/JPyRust?style=flat-square&color=blue&label=Release)](https://jitpack.io/#farmer0010/JPyRust)
+[![License](https://img.shields.io/github/license/farmer0010/JPyRust?style=flat-square&color=green)](LICENSE)
+![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-lightgrey?style=flat-square)
+
+<p align="center">
+  <a href="https://openjdk.org/">
+    <img src="https://img.shields.io/badge/Java-17+-orange?logo=openjdk&style=for-the-badge" alt="Java">
+  </a>
+  <a href="https://www.rust-lang.org/">
+    <img src="https://img.shields.io/badge/Rust-1.70+-orange?logo=rust&style=for-the-badge" alt="Rust">
+  </a>
+  <a href="https://www.python.org/">
+    <img src="https://img.shields.io/badge/Python-3.11-blue?logo=python&style=for-the-badge" alt="Python">
+  </a>
+</p>
+
+<div align="center">
+  <a href="README.md">🇺🇸 English Version</a>
+</div>
 
 ---
 
 ## 💡 프로젝트 소개
 
-**JPyRust**는 **Spring Boot** 환경에서 YOLO, PyTorch, TensorFlow 같은 무거운 Python AI 모델들을 **오버헤드 없이 실시간으로** 구동할 수 있게 해주는 고성능 하이브리드 아키텍처입니다.
+**JPyRust**는 **Java의 견고함**과 **Python의 AI 생태계** 간의 격차를 해소하기 위해 설계된 하이브리드 아키텍처입니다. **Spring Boot** 애플리케이션이 **네이티브에 가까운 성능**으로 무거운 AI 모델(YOLO, PyTorch, TensorFlow)을 실행할 수 있게 해줍니다.
 
-기존의 `ProcessBuilder` 방식은 느리고, HTTP API 방식은 관리가 복잡합니다. JPyRust는 **Rust JNI**와 **영속형 임베디드 Python 데몬(Persistent Embedded Python Daemon)**을 활용하여 네이티브 수준의 처리 속도를 보장합니다.
+느린 `ProcessBuilder`나 지연 시간이 긴 HTTP API와 달리, JPyRust는 **Rust JNI**와 **공유 메모리(SHMEM)**를 활용하여 밀리초(ms) 단위 미만의 초고속 통신을 달성합니다.
 
-**🔥 v1.0 정식 출시:** Java-Rust-Python 하이브리드 아키텍처가 완성되었습니다. 이미지 처리는 **공유 메모리(SHMEM)**로 초고속 처리를, 텍스트 작업은 **파일 IPC**로 안정성을 보장하는 **지능형 IPC 선택** 기술이 탑재되었습니다.
+### 🌟 왜 JPyRust인가요?
+* 🚀 **Zero-Latency (지연 없음)**: 느린 HTTP/Socket 대신 시스템 RAM(공유 메모리)을 직접 사용하여 데이터 교환.
+* 🔄 **완벽한 병렬성 (True Parallelism)**: v1.3.0부터 **멀티 인스턴스** 아키텍처를 지원하여, 하나의 Java 앱이 여러 개의 독립적인 Python 프로세스를 동시에 제어할 수 있습니다.
+* 🛠️ **Zero-Config (설정 불필요)**: 격리된 **임베디드 Python 환경**을 자동으로 설치합니다. 복잡한 `pip install` 과정이 필요 없습니다.
+* 🛡️ **Crash-Proof (충돌 방지)**: Rust가 Python 프로세스의 상태를 실시간 감시하며, 충돌 발생 시 즉시 워커를 자동 재시작합니다.
 
-### 🚀 왜 JPyRust를 선택해야 할까요?
+---
 
-| 비교 항목 | 로컬 CLI 실행 (ProcessBuilder) | HTTP API (FastAPI/Flask) | **JPyRust** |
-| :--- | :---: | :---: | :---: |
-| **반응 속도 (Latency)** | 🔴 **느림** (매번 Python VM 부팅) | 🟡 **보통** (네트워크 통신 비용) | 🟢 **즉시 응답** (공유 메모리 기술) |
-| **시스템 복잡도** | 🟡 **보통** (표준 입출력 파싱) | 🔴 **높음** (별도 마이크로서비스 관리) | 🟢 **낮음** (단일 모놀리식 구조) |
-| **배포 난이도** | 🟢 **쉬움** | 🔴 **어려움** (Docker/Orchestration 필수) | 🟢 **쉬움** (내장형 환경 자동 구성) |
+## 🏗️ 아키텍처 (v1.3.0)
+
+**v1.3.0 업데이트**를 통해 JPyRust는 전역 싱글톤 패턴에서 벗어나 **멀티 인스턴스 객체 지향 아키텍처**로 완전히 전환되었습니다. 이를 통해 단일 Java 애플리케이션이 여러 개의 독립적인 AI 워커(예: 4채널 CCTV 동시 분석)를 효율적으로 제어할 수 있습니다.
+
+### 🧩 시스템 컴포넌트 다이어그램
+
+```mermaid
+graph TD
+    subgraph JavaApp [☕ Java 애플리케이션 계층]
+        style JavaApp fill:#f9f2f4,stroke:#333,stroke-width:2px
+        J1["카메라 1 브리지<br>(인스턴스 ID: cam1)"]
+        J2["카메라 2 브리지<br>(인스턴스 ID: cam2)"]
+    end
+
+    subgraph NativeLayer [🦀 Rust JNI 계층]
+        style NativeLayer fill:#e8f4f8,stroke:#333,stroke-width:2px
+        R1["BridgeState A<br>{Ptr: 0x7FA...}"]
+        R2["BridgeState B<br>{Ptr: 0x81B...}"]
+    end
+
+    subgraph PythonLayer [🐍 임베디드 Python 계층]
+        style PythonLayer fill:#edfbec,stroke:#333,stroke-width:2px
+        P1["Python 워커 A<br>(PID: 1001)"]
+        P2["Python 워커 B<br>(PID: 1002)"]
+    end
+
+    J1 -- "JNI 호출 (nativePtr)" --> R1
+    J2 -- "JNI 호출 (nativePtr)" --> R2
+    
+    R1 <== "⚡ 공유 메모리 (이미지)" ==> P1
+    R2 <== "⚡ 공유 메모리 (이미지)" ==> P2
+    
+    P1 -- "JSON 결과" --> R1
+    P2 -- "JSON 결과" --> R2
+```
+
+### ⚡ 실행 시퀀스 (Sequence)
+
+```mermaid
+sequenceDiagram
+    participant Java as ☕ Java (Spring)
+    participant Rust as 🦀 Rust (JNI)
+    participant Py as 🐍 Python (Worker)
+
+    Note over Java, Py: 초기화 단계 (Initialization)
+    Java->>Rust: new JPyRustBridge("cam1").initialize()
+    Rust->>Rust: BridgeState 메모리 할당 (Heap)
+    Rust->>Py: 프로세스 생성 (인자: --instance-id cam1)
+    Py->>Py: 작업 폴더 설정 ~/.jpyrust/cam1/
+    Py-->>Rust: "READY" 신호 전송
+    Rust-->>Java: nativePtr (핸들) 반환
+
+    Note over Java, Py: 추론 단계 (Inference Loop)
+    Java->>Rust: processImage(ptr, image_bytes)
+    Rust->>Rust: 공유 메모리에 이미지 쓰기
+    Rust->>Py: IPC 신호 전송
+    Py->>Py: SHMEM 읽기 -> YOLO 추론
+    Py-->>Rust: JSON 결과 반환
+    Rust-->>Java: 결과 문자열 반환
+```
 
 ---
 
 ## ⚡ 성능 벤치마크
 
-| 테스트 항목 | 기존 방식 (CLI 호출) | 🚀 JPyRust (v1.0) | 개선율 |
-|:---|:---:|:---:|:---:|
-| **초기 구동 지연** | ~1,500ms (매 호출마다 VM 시작) | **0ms** (상시 대기 프로세스) | **지연 없음** |
-| **객체 탐지 (YOLO)** | ~2,000ms | **~100ms** (CPU) / **~40ms** (GPU) | 🔥 **50배 향상** |
-| **텍스트 분석 (NLP)** | ~7,000ms (모델 로딩 포함) | **~50ms** (파일 IPC 최적화) | 🔥 **140배 향상** |
-| **데이터 전송 효율** | 디스크 I/O 의존 (부하 높음) | **하이브리드 (SHMEM/File)** | **작업별 최적화** |
+| 아키텍처 | 통신 방식 | 지연 시간 (평균) | 처리량 | 안정성 |
+| :--- | :--- | :---: | :---: | :---: |
+| **CLI (ProcessBuilder)** | 표준 입출력 (Stdin/Out) | ~1,500ms | 🔴 낮음 | 🔴 낮음 (JVM 블로킹) |
+| **HTTP (FastAPI/Flask)** | REST API | ~100ms | 🟡 보통 | 🟢 높음 |
+| **JPyRust v1.3.0** | **공유 메모리 (SHMEM)** | **🟢 ~40ms** | **🟢 높음 (병렬 처리)** | **🟢 높음 (프로세스 격리)** |
 
----
-
-## ⚠️ 하드웨어 가속 (GPU) 지원
-
-JPyRust는 실행 환경의 하드웨어를 스스로 감지하여 최적의 성능을 냅니다:
-
-> **🤖 지능형 자동 감지 (Auto-Detection):**
-> * **GPU 모드:** 시스템에 NVIDIA 드라이버와 CUDA Toolkit이 감지되면 자동으로 활성화됩니다.
->     * *(평균 처리 속도: ~0.04초 / 25 FPS 이상)*
-> * **CPU 모드:** CUDA 환경이 없을 경우, 별도 설정 없이 **즉시 CPU 모드로 전환**되어 안정적으로 실행됩니다.
->     * *(평균 처리 속도: ~0.10초 / 10 FPS 이상)*
-
----
-
-## 🎯 지원 기능 (Standard Battery)
-
-v2.4 버전부터는 작업 유형에 따라 최적의 통신 방식을 자동으로 선택합니다.
-
-| 작업 유형 | API 엔드포인트 | 통신 방식 (IPC) | 핵심 라이브러리 | 활용 예시 |
-|:---|:---|:---:|:---|:---|
-| 🔍 **객체 탐지** | `processImage` | SHMEM | `Ultralytics (YOLO)` | 실시간 CCTV, 웹캠 인식 |
-| 🧠 **자연어 처리** | `processNlp` | FILE | `TextBlob` | 텍스트 감성 분석 |
-| 📈 **데이터 분석** | `processRegression` | FILE | `Pandas`, `Scikit-Learn` | 실시간 선형 회귀 예측 |
-| 🎨 **영상 처리** | `processEdgeDetection` | SHMEM | `OpenCV` | Canny 엣지 검출 |
-
----
-
-## 🏗️ 아키텍처 개요
-
-Java가 컨트롤 타워가 되어 Rust를 통해 Python 프로세스를 정밀하게 제어합니다. **지능형 IPC 선택** 기술을 통해 데이터 종류에 가장 적합한 전송 경로를 결정합니다.
-
-```mermaid
-graph TD
-    subgraph "Java Layer (Spring Boot)"
-        Controller["☕ Controller"]
-        JavaBridge["🔗 JPyRustBridge.java"]
-        Dist["📦 내장 Python 환경"]
-    end
-
-    subgraph "Rust Layer (JNI)"
-        RustBridge["🦀 jpyrust.dll"]
-        IPCSwitch{"작업 유형 판별"}
-    end
-
-    subgraph "Python Layer (Daemon)"
-        Daemon["🐍 Python 워커 프로세스"]
-        Models["🧠 AI 엔진"]
-    end
-
-    Controller --> JavaBridge
-    JavaBridge --> RustBridge
-    RustBridge --> IPCSwitch
-    
-    IPCSwitch -- "이미지 (YOLO/Edge)" --> RAM_IN["💾 공유 메모리 (고속)"]
-    IPCSwitch -- "텍스트 (NLP/Regression)" --> FILE_IN["📁 파일 IPC (안정성)"]
-    
-    RAM_IN --> Daemon
-    FILE_IN --> Daemon
-    Daemon --> Models
-```
-
-**IPC 모드 선택 원리:**
-- **SHMEM (공유 메모리):** 대용량 바이너리 데이터(이미지, 비디오) 처리에 사용하여 **최대 속도**를 보장합니다.
-- **FILE IPC (파일 기반):** 텍스트 기반 작업 처리에 사용하여 Windows 환경에서의 **호환성과 안정성**을 확보합니다.
-
----
-
-## 🧩 기능 확장 가이드
-
-JPyRust는 개발자가 자신만의 Python 로직을 쉽게 추가할 수 있도록 설계되었습니다.
-
-### 새로운 Python 작업 추가하기
-
-1.  **Python 작업 정의 (`python-core/ai_worker.py`)**:
-    ```python
-    def handle_my_task(request_id, metadata):
-        # 프로토콜 파싱 및 로직 수행
-        raw_data, meta, out_info = parse_input_protocol(request_id, metadata)
-        
-        # ... 나만의 비즈니스 로직 작성 ...
-        result = "Hello from Python!"
-        
-        # 결과 반환
-        result_bytes = result.encode('utf-8')
-        bytes_written = write_output_data(request_id, result_bytes, out_info)
-        return f"DONE {bytes_written}"
-
-    TASK_HANDLERS = {
-        "YOLO": handle_yolo_task,
-        "MY_TASK": handle_my_task, # 신규 작업 등록
-    }
-    ```
-
-2.  **Java 호출 메서드 추가 (`JPyRustBridge.java`)**:
-    ```java
-    public String runMyTask(String input) {
-        try {
-            byte[] inputBytes = input.getBytes("UTF-8");
-            
-            // 데이터 전송을 위한 버퍼 할당
-            ByteBuffer buffer = ByteBuffer.allocateDirect(inputBytes.length);
-            buffer.put(inputBytes);
-            buffer.flip();
-            
-            String requestId = UUID.randomUUID().toString();
-            
-            // Rust 브리지 호출
-            byte[] result = executeTask(workDir, "MY_TASK", requestId, "", buffer, inputBytes.length);
-            return new String(result, "UTF-8");
-        } catch (UnsupportedEncodingException e) {
-            throw new RuntimeException(e);
-        }
-    }
-    ```
-
-3.  **라이브러리 추가**:
-    * 필요한 패키지를 `requirements.txt`에 추가하면 다음 서버 실행 시 자동으로 설치됩니다.
-    ```bash
-    # 예시: requirements.txt 파일에 추가
-    new-library==1.0.0
-    ```
-
----
-
-## 🛠️ 프로젝트 통합 가이드
-
-### 1. 빌드 스크립트 설정 (`build.gradle.kts`)
-
-Java 애플리케이션이 `java-api` 모듈을 의존하고, 실행 시 Rust 라이브러리를 찾을 수 있도록 설정합니다.
-
-```kotlin
-dependencies {
-    implementation(project(":java-api"))
-}
-
-tasks.withType<org.springframework.boot.gradle.tasks.run.BootRun> {
-    // Rust 빌드 결과물 경로 지정 (필수)
-    systemProperty("java.library.path", file("../rust-bridge/target/release").absolutePath)
-}
-```
-
-### 2. 애플리케이션 설정 (`application.yml`)
-
-```yaml
-app:
-  ai:
-    work-dir: C:/jpyrust_temp        # 런타임 작업 디렉토리
-    source-script-dir: ./python-core # 원본 Python 스크립트 위치
-    model-path: yolov8n.pt           # AI 모델 파일명
-    confidence: 0.5                  # 탐지 임계값
-```
+> *테스트 환경: Ryzen 5 5600X, 32GB RAM, NVIDIA RTX 3060, YOLOv8n 모델*
 
 ---
 
 ## 🚀 빠른 시작 (Quick Start)
 
-### 시스템 요구사항
-* **Java 17 이상**
-* **Rust (Cargo)**: 네이티브 브리지 컴파일용
-* **Python**: 불필요 (프로젝트 실행 시 내장 Python이 자동 설치됨)
+### 1. 설치 (Gradle)
+`build.gradle.kts` 파일에 JitPack 리포지토리와 의존성을 추가하세요:
 
-### 1. 빌드 및 실행
+```kotlin
+repositories {
+    maven { url = uri("[https://jitpack.io](https://jitpack.io)") }
+}
 
-```bash
-# 1. 프로젝트 복제
-git clone [https://github.com/your-org/JPyRust.git](https://github.com/your-org/JPyRust.git)
-cd JPyRust
-
-# 2. Rust 브리지 빌드 (네이티브 라이브러리 생성)
-cd rust-bridge
-cargo build --release
-cd ..
-
-# 3. Java 서버 실행
-# ※ 최초 실행 시 내장 Python 환경 구성(약 500MB 다운로드)으로 인해 시간이 소요됩니다.
-./gradlew :demo-web:bootRun
+dependencies {
+    // 최신 안정 버전
+    implementation("com.github.farmer0010:JPyRust:v1.3.0")
+}
 ```
 
-### 2. 데모 테스트
+### 2. 사용법 (Java)
 
-* **기능 데모**: `http://localhost:8080/features.html` (종합 기능 테스트)
-* **비디오 스트리밍**: `http://localhost:8080/video.html` (웹캠 YOLO 테스트)
+**중요:** v1.3.0부터 `static` 메서드가 제거되었습니다. 반드시 `JPyRustBridge` 객체를 생성해야 합니다.
+
+```java
+import com.jpyrust.JPyRustBridge;
+
+public class VisionService {
+    
+    public void startDetection() {
+        // 1. 각 카메라를 위한 독립적인 인스턴스 생성
+        JPyRustBridge cam1 = new JPyRustBridge("cam1");
+        JPyRustBridge cam2 = new JPyRustBridge("cam2");
+
+        // 2. 초기화 (각각 ~/.jpyrust/camX 경로에 워커 프로세스 생성)
+        cam1.initialize(); 
+        cam2.initialize(); 
+
+        // 3. 이미지 처리 (스레드 안전)
+        // 인자: (이미지데이터, 길이, 가로, 세로, 채널)
+        byte[] result1 = cam1.processImage(imgData1, len1, 640, 480, 3);
+        byte[] result2 = cam2.processImage(imgData2, len2, 640, 480, 3);
+        
+        System.out.println("Cam1 결과: " + new String(result1));
+    }
+}
+```
 
 ---
 
-## 🔧 문제 해결 (Troubleshooting)
+## 🛠️ 설정 및 문제 해결 (Troubleshooting)
 
-### Q. `UnsatisfiedLinkError: no jpyrust in java.library.path` 오류가 발생해요.
-**A.** Java가 Rust 라이브러리를 찾지 못한 경우입니다. `rust-bridge/` 폴더에서 `cargo build --release` 명령어를 실행하여 DLL/SO 파일을 생성했는지 확인하세요.
+<details>
+<summary><strong>🔧 1. UnsatisfiedLinkError / DLL을 찾을 수 없음</strong></summary>
 
-### Q. `Python daemon exited before sending READY` 오류가 떠요.
-**A.** 내장 Python 환경이 꼬였을 수 있습니다. `C:/jpyrust_temp/` (또는 설정한 작업 폴더)를 완전히 삭제한 후 서버를 재시작하세요.
+* **원인:** Java가 네이티브 라이브러리(`dll`/`so`)를 찾지 못하는 경우입니다.
+* **해결:** JPyRust는 라이브러리를 자동으로 `AppData/Local/Temp`에 추출합니다. 문제가 지속되면 `jpyrust.dll` (Windows) 또는 `libjpyrust.so` (Linux)가 라이브러리 경로에 있는지 확인하세요.
+</details>
 
-### Q. NLP나 Regression 결과가 비어 있어요.
-**A.** 서버 로그를 확인해 보세요. `[Rust] Text task detected - using FILE IPC` 메시지가 보인다면 정상적으로 모드가 전환된 것입니다. 만약 에러가 보인다면 `ai_worker.py`의 로그를 확인해야 합니다.
+<details>
+<summary><strong>🛡️ 2. WinError 5 (Access Denied)</strong></summary>
+
+* **원인:** Windows의 공유 메모리 생성 시 보안 권한 문제입니다.
+* **해결:** JPyRust v1.2+ 버전은 `SECURITY_ATTRIBUTES`와 SDDL `D:(A;;GA;;;WD)` 설정을 적용하여, 자식 프로세스가 권한 문제 없이 접근할 수 있도록 해결되었습니다. 별도 조치가 필요 없습니다.
+</details>
+
+<details>
+<summary><strong>🐍 3. Python 의존성 문제</strong></summary>
+
+* JPyRust는 **포터블 임베디드 Python**을 내장하고 있으며, `~/.jpyrust/python_dist`에 자동으로 설치됩니다.
+* 라이브러리가 부족하다면 `resources` 폴더의 `requirements.txt`를 확인하세요.
+</details>
 
 ---
 
 ## 📜 버전 히스토리
 
-*   **v1.1.1 (Hotfix)**:
-    *   **Dynamic Shared Memory Key**: Windows 재시작 시 발생하는 `WinError 5 (Access Denied)` 문제를 고유 세션 UUID로 해결.
-*   **v1.1**:
-    *   **Observability**: `/api/status` 엔드포인트로 Python 데몬 상태 (RAM, GPU) 실시간 모니터링
-    *   **Plugin System**: `python-core/plugins/`에 파이썬 파일 추가 시 자동 로딩
-    *   **Docker Registry Guide**: GitHub Actions를 통한 Docker Hub 자동 배포 가이드 제공
-*   **v1.0 (공식 출시)**:
-    *   **Universal Bridge Architecture**: Java-Rust-Python 하이브리드 아키텍처 완성
-    *   **Intelligent IPC Selection**: 이미지(SHMEM) / 텍스트(FILE) 자동 최적화
-    *   **Multi-OS Support**: Windows, Linux, macOS 동시 지원
-    *   **Embedded Python**: 내장 파이썬 환경 및 의존성 자동 관리
-    *   **GPU Auto-Detection**: NVIDIA GPU 자동 감지 및 가속
+* **v1.3.0 (최신)** 🚀
+    * **대규모 리팩토링:** 멀티 인스턴스(Multi-Instance) 아키텍처로 전환.
+    * **Breaking Change:** Static 메서드 제거 및 생성자(`new`) 기반 초기화 도입.
+    * **기능 추가:** 인스턴스별 작업 디렉토리 격리 (`~/.jpyrust/cam1`).
 
----
+* **v1.2.0**
+    * **성능:** Win32 API 직접 호출을 통해 Windows 환경에서 공유 메모리(SHMEM) 기능 복구.
+    * **보안:** 커스텀 보안 기술자(Security Descriptor)를 적용하여 `WinError 5` 근본 해결.
 
-## 📅 향후 계획 (Roadmap)
-
-*   [ ] **Docker Registry Integration**: GitHub Release 시 자동으로 Docker Hub에 이미지 푸시 (현재 가이드 제공됨)
-*   [ ] **GPU Resource Managment**: GPU 메모리 사용량에 따른 동적 배치 처리
-*   [ ] **Hot-Reloading**: 서버 재시작 없이 Python 플러그인 실시간 갱신
+* **v1.1.0**
+    * 초기 Windows 지원 및 파일 기반 IPC 폴백 모드 추가.
 
 ---
 
 ## 📄 라이선스
 
-이 프로젝트는 MIT 라이선스를 따릅니다.
+이 프로젝트는 **MIT 라이선스**를 따릅니다. 자세한 내용은 [LICENSE](LICENSE) 파일을 참조하세요.
 
----
-
-<p align="center">
-  <b>Built with ☕ Java + 🦀 Rust + 🐍 Python</b><br>
-  <i>세 가지 언어의 완벽한 조화.</i>
-</p>
+<div align="center">
+  <sub>Built with 🦀 Rust & ☕ Java by Farmer0010 (JPyRust Team).</sub>
+</div>
