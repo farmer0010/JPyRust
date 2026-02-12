@@ -294,6 +294,69 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_initNative<'local>(
     }
 }
 
+#[cfg(target_os = "windows")]
+fn create_shmem_permissive(name: &str, size: usize) -> Result<shared_memory::Shmem, String> {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE, GetLastError, LocalFree};
+    use windows_sys::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
+    use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
+    use windows_sys::Win32::System::Memory::{CreateFileMappingW, PAGE_READWRITE};
+    use std::ptr;
+    use std::ffi::c_void;
+
+    unsafe {
+        let mut sd: *mut c_void = ptr::null_mut();
+        // SDDL: D:(A;;GA;;;WD) = DACL: (Ace: Generic All, Who: World/Everyone)
+        let sddl = "D:(A;;GA;;;WD)\0".encode_utf16().collect::<Vec<u16>>();
+        
+        if ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl.as_ptr(),
+            1, 
+            &mut sd,
+            ptr::null_mut(),
+        ) == 0 {
+             return Err(format!("ConvertStringSecurityDescriptorToSecurityDescriptorW failed: {}", GetLastError()));
+        }
+
+        let mut sa = SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: sd,
+            bInheritHandle: 0,
+        };
+
+        let name_wide = name.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
+        let h_map = CreateFileMappingW(
+            INVALID_HANDLE_VALUE,
+            &mut sa,
+            PAGE_READWRITE,
+            0,
+            size as u32,
+            name_wide.as_ptr(),
+        );
+
+        let creation_result = if h_map == 0 {
+             Err(format!("CreateFileMappingW failed: {}", GetLastError()))
+        } else {
+             // Now open it with shared_memory crate while our handle is still valid
+             match shared_memory::ShmemConf::new().os_id(name).open() {
+                 Ok(shmem) => Ok(shmem),
+                 Err(e) => Err(format!("Failed to open created shmem: {}", e)),
+             }
+        };
+
+        if h_map != 0 {
+            CloseHandle(h_map);
+        }
+        LocalFree(sd);
+        
+        creation_result
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn create_shmem_permissive(name: &str, size: usize) -> Result<shared_memory::Shmem, String> {
+    shared_memory::ShmemConf::new().size(size).os_id(name).create().map_err(|e| e.to_string())
+}
+
 #[no_mangle]
 pub extern "system" fn Java_com_jpyrust_JPyRustBridge_executeTask<'local>(
     mut env: JNIEnv<'local>,
@@ -356,11 +419,7 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_executeTask<'local>(
 
     let shm_name_in = format!("{}_{}", session_key, &request_id_str[..8.min(request_id_str.len())]);
     
-    let mut shm_in = match ShmemConf::new()
-        .size(length)
-        .os_id(&shm_name_in)
-        .create() 
-    {
+    let mut shm_in = match create_shmem_permissive(&shm_name_in, length) {
         Ok(m) => m,
         Err(e) => {
             log_to_java("WARN", &format!("[Rust] Input SHM creation failed: {}. Falling back to FILE.", e));
@@ -378,11 +437,7 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_executeTask<'local>(
 
     let shm_name_out = format!("{}_out_{}", session_key, &request_id_str[..8.min(request_id_str.len())]);
     
-    let shm_out = match ShmemConf::new()
-        .size(OUTPUT_SHM_SIZE)
-        .os_id(&shm_name_out)
-        .create() 
-    {
+    let shm_out = match create_shmem_permissive(&shm_name_out, OUTPUT_SHM_SIZE) {
         Ok(m) => m,
         Err(e) => {
             log_to_java("WARN", &format!("[Rust] Output SHM creation failed: {}. Falling back to FILE.", e));

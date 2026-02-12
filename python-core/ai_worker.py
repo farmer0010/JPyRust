@@ -8,28 +8,39 @@ try:
     import psutil
 except ImportError:
     psutil = None
+import io
 import platform
 import importlib.util
 import glob
 import json
 
+# Force UTF-8 for Windows Console
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
 APP_START_TIME = time.time()
 
+# --- Auto-Bootstrap Logic ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
 marker_file = os.path.join(current_dir, ".installed")
 
 if not os.path.exists(marker_file):
     print("[Daemon] First run detected. Bootstrapping dependencies...", flush=True)
     try:
+        # Save args
         original_argv = sys.argv[:]
         
         import bootstrap
         bootstrap.main()
         
+        # Restore args
         sys.argv = original_argv
         print("[Daemon] Bootstrap complete. Starting worker...", flush=True)
     except Exception as e:
         print(f"[Daemon] Bootstrap failed: {e}", flush=True)
+        # Continue anyway, imports might fail later
+# ----------------------------
 
 import numpy as np
 import cv2
@@ -65,13 +76,10 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--daemon", action="store_true")
 parser.add_argument("--model", type=str, default="yolov8n.pt", help="Path to YOLO model")
 parser.add_argument("--conf", type=float, default=0.5, help="Confidence threshold")
-parser.add_argument("--mem-key", type=str, default=None, help="Shared Memory Session Key")
+parser.add_argument("--mem-key", type=str, default="", help="Session memory key from Rust")
 args, unknown = parser.parse_known_args()
 
-if args.mem_key:
-    print(f"[Daemon] Initialized with Memory Session Key: {args.mem_key}", flush=True)
-
-WORK_DIR = "C:/jpyrust_temp"
+WORK_DIR = os.path.expanduser("~/.jpyrust")
 HEADER_SIZE = 4
 TARGET_WIDTH = 640
 JPEG_QUALITY = 85
@@ -125,6 +133,8 @@ def load_plugins():
              print(f"[Plugin] Failed to load {plugin_file}: {e}", flush=True)
 
 def parse_input_protocol(request_id, metadata, task_type=None):
+    # Hybrid IPC for text-based tasks: READ from SHMEM (Rust sends data there), 
+    # but force FILE OUTPUT (avoids Windows SHMEM write permission issues)
     TEXT_BASED_TASKS = {"NLP_TEXTBLOB", "SENTIMENT", "REGRESSION"}
     force_file_output = task_type and task_type.upper() in TEXT_BASED_TASKS
     
@@ -132,16 +142,19 @@ def parse_input_protocol(request_id, metadata, task_type=None):
         in_shm_name = metadata[1]
         in_size = int(metadata[2])
         
-        if len(metadata) >= 5 and "jpyrust_out_" in metadata[3]:
+        if len(metadata) >= 5 and "_out_" in metadata[3]:
             out_shm_name = metadata[3]
             out_cap = int(metadata[4])
             real_metadata = metadata[5:]
+            # For text tasks: ignore output SHMEM, use File instead
             out_info = None if force_file_output else (out_shm_name, out_cap)
         else:
             real_metadata = metadata[3:]
             out_info = None
 
         try:
+            # Retry mechanism for Windows Shared Memory Access Denied (WinError 5)
+            # Increased delay and attempts for more robust handling
             MAX_ATTEMPTS = 15
             for attempt in range(MAX_ATTEMPTS):
                 try:
@@ -151,7 +164,7 @@ def parse_input_protocol(request_id, metadata, task_type=None):
                     break
                 except PermissionError as e:
                     if attempt == MAX_ATTEMPTS - 1: raise e
-                    time.sleep(0.05 + attempt * 0.01)
+                    time.sleep(0.05 + attempt * 0.01)  # 50ms base + progressive delay
                 except FileNotFoundError as e:
                     if attempt == MAX_ATTEMPTS - 1: raise e
                     time.sleep(0.05 + attempt * 0.01)
@@ -215,41 +228,44 @@ def handle_yolo_task(request_id: str, raw_metadata: list) -> str:
     try:
         raw_data, metadata, out_info = parse_input_protocol(request_id, raw_metadata)
         
-        if len(metadata) < 3:
-            return "ERROR Missing metadata (width, height, channels)"
-        
-        width = int(metadata[0])
-        height = int(metadata[1])
-        channels = int(metadata[2])
-        
         start_time = time.time()
         
-        image = np.frombuffer(raw_data, dtype=np.uint8).reshape((height, width, channels))
-        original_shape = image.shape
+        nparr = np.frombuffer(raw_data, dtype=np.uint8)
+        image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
+        if image is None:
+            return "ERROR Failed to decode image"
         
         image = resize_image(image, TARGET_WIDTH)
         
+        detection_list = []
+        
         if yolo_model is not None:
             results = yolo_model(image, conf=args.conf, verbose=False)
-            detections = len(results[0].boxes) if results[0].boxes is not None else 0
-            annotated_frame = results[0].plot()
-        else:
-            annotated_frame = image
-            detections = 0
+            boxes = results[0].boxes
+            if boxes is not None and len(boxes) > 0:
+                for box in boxes:
+                    x1, y1, x2, y2 = box.xyxy[0].tolist()
+                    w = x2 - x1
+                    h = y2 - y1
+                    score = float(box.conf[0])
+                    cls_id = int(box.cls[0])
+                    label = results[0].names[cls_id]
+                    detection_list.append({
+                        "bbox": [x1, y1, w, h],
+                        "label": label,
+                        "score": score
+                    })
         
-        encode_params = [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
-        success, jpeg_data = cv2.imencode('.jpg', annotated_frame, encode_params)
-        if not success:
-            return "ERROR JPEG encoding failed"
+        result_json = json.dumps({"detections": detection_list})
+        result_bytes = result_json.encode('utf-8')
         
-        data_to_write = jpeg_data.tobytes()
-        
-        bytes_written = write_output_data(request_id, data_to_write, out_info)
+        bytes_written = write_output_data(request_id, result_bytes, out_info)
         
         elapsed = (time.time() - start_time) * 1000
         mode = "FULL-SHMEM" if out_info else ("SHMEM-IN" if raw_metadata[0] == "SHMEM" else "FILE")
         
-        print(f"[YOLO] ID:{request_id[:8]} | {mode} | {detections} objs | {elapsed:.0f}ms", flush=True)
+        print(f"[YOLO] ID:{request_id[:8]} | {mode} | {len(detection_list)} objs | {elapsed:.0f}ms", flush=True)
         
         return f"DONE {bytes_written}"
         
@@ -257,6 +273,7 @@ def handle_yolo_task(request_id: str, raw_metadata: list) -> str:
         print(f"[YOLO Error] {e}", flush=True)
         import traceback
         traceback.print_exc()
+
         return f"ERROR {e}"
 
 def handle_sentiment_task(request_id: str, raw_metadata: list) -> str:
@@ -306,7 +323,7 @@ def handle_enhanced_sentiment(request_id: str, raw_metadata: list) -> str:
         text = raw_data.decode('utf-8')
         
         blob = TextBlob(text)
-        sentiment_score = blob.sentiment.polarity 
+        sentiment_score = blob.sentiment.polarity # -1.0 to 1.0
         subjectivity = blob.sentiment.subjectivity
         
         if sentiment_score > 0.1:
@@ -330,6 +347,7 @@ def handle_regression_task(request_id: str, raw_metadata: list) -> str:
 
     try:
         raw_data, metadata, out_info = parse_input_protocol(request_id, raw_metadata, task_type="REGRESSION")
+        # Input: JSON string "[[1, 2], [2, 4], [3, 6]]"
         import json
         json_str = raw_data.decode('utf-8')
         data = json.loads(json_str)
@@ -365,6 +383,7 @@ def handle_edge_detection(request_id: str, raw_metadata: list) -> str:
         
         image = np.frombuffer(raw_data, dtype=np.uint8).reshape((height, width, channels))
         
+        # Canny Edge Detection
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         edges = cv2.Canny(gray, 100, 200)
         edges_bgr = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
@@ -407,6 +426,7 @@ def handle_status(request_id: str, raw_metadata: list) -> str:
             "active_plugins": [k for k in TASK_HANDLERS.keys() if k not in ["YOLO", "SENTIMENT", "NLP_TEXTBLOB", "REGRESSION", "EDGE_DETECT", "STATUS"]]
         }
         
+        # Determine output mode (same logic as text tasks: prefer FILE for JSON to be safe)
         _, _, out_info = parse_input_protocol(request_id, raw_metadata, task_type="STATUS")
         
         json_result = json.dumps(status)
@@ -419,7 +439,7 @@ def handle_status(request_id: str, raw_metadata: list) -> str:
 
 TASK_HANDLERS = {
     "YOLO": handle_yolo_task,
-    "SENTIMENT": handle_sentiment_task, 
+    "SENTIMENT": handle_sentiment_task, # Legacy rule-based
     "NLP_TEXTBLOB": handle_enhanced_sentiment,
     "REGRESSION": handle_regression_task,
     "EDGE_DETECT": handle_edge_detection,
