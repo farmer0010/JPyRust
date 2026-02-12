@@ -178,8 +178,9 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_initNative<'local>(
 ) {
     let work_dir_str: String = env.get_string(&work_dir).unwrap().into();
     let memory_key_str: String = env.get_string(&memory_key).unwrap().into();
-    let instance_id: String = env.get_field(&obj, "instanceId", "Ljava/lang/String;").unwrap().l().unwrap().into();
-    let instance_id_str: String = env.get_string(&instance_id.into()).unwrap().into();
+    let instance_id_obj = env.get_field(&obj, "instanceId", "Ljava/lang/String;").unwrap().l().unwrap();
+    let instance_id: JString = instance_id_obj.into();
+    let instance_id_str: String = env.get_string(&instance_id).unwrap().into();
 
     let vm = env.get_java_vm().unwrap();
     let global_obj = env.new_global_ref(&obj).unwrap();
