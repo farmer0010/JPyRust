@@ -126,7 +126,7 @@ repositories {
 
 dependencies {
     // 최신 안정 버전
-    implementation("com.github.farmer0010:JPyRust:v1.3.0")
+    implementation("com.github.farmer0010:JPyRust:v1.3.1")
 }
 ```
 
@@ -144,12 +144,13 @@ public class VisionService {
         JPyRustBridge cam1 = new JPyRustBridge("cam1");
         JPyRustBridge cam2 = new JPyRustBridge("cam2");
 
-        // 2. 초기화 (각각 ~/.jpyrust/camX 경로에 워커 프로세스 생성)
+        // 2. 기본값으로 초기화 (각각 ~/.jpyrust/camX 경로에 워커 프로세스 생성)
         cam1.initialize(); 
-        cam2.initialize(); 
+
+        // 2-1. (v1.3.1+) 커스텀 모델 및 confidence로 초기화
+        cam2.initialize("/path/to/workdir", "custom_model.pt", 0.25f); 
 
         // 3. 이미지 처리 (스레드 안전)
-        // 인자: (이미지데이터, 길이, 가로, 세로, 채널)
         byte[] result1 = cam1.processImage(imgData1, len1, 640, 480, 3);
         byte[] result2 = cam2.processImage(imgData2, len2, 640, 480, 3);
         
@@ -179,7 +180,8 @@ public class VisionService {
 <details>
 <summary><strong>🐍 3. Python 의존성 문제</strong></summary>
 
-* JPyRust는 **포터블 임베디드 Python**을 내장하고 있으며, `~/.jpyrust/python_dist`에 자동으로 설치됩니다.
+* **Windows:** JPyRust는 **포터블 임베디드 Python**을 내장하고 있으며, `~/.jpyrust/python_dist`에 자동으로 설치됩니다.
+* **Linux/Docker (v1.3.1+):** JPyRust가 자동으로 Linux 환경을 감지하여 임베디드 Python 대신 시스템의 `python3`를 사용합니다. `python3`가 설치되어 있는지 확인하세요 (`apt-get install python3`).
 * 라이브러리가 부족하다면 `resources` 폴더의 `requirements.txt`를 확인하세요.
 </details>
 
@@ -187,7 +189,12 @@ public class VisionService {
 
 ## 📜 버전 히스토리
 
-* **v1.3.0 (최신)** 🚀
+* **v1.3.1 (최신)** 🐧
+    * **Linux/Docker 지원:** `setupEmbeddedPython`이 OS를 감지하여 Linux에서 시스템 `python3`를 자동 사용.
+    * **커스텀 파라미터:** `initialize(workDir, modelPath, confidence)` 오버로드 추가로 커스텀 AI 모델 설정 지원.
+    * **하위 호환성:** 기존 `initialize(workDir)` 호출은 기본값(`yolov8n.pt`, `0.5f`)으로 동일하게 동작.
+
+* **v1.3.0** 🚀
     * **대규모 리팩토링:** 멀티 인스턴스(Multi-Instance) 아키텍처로 전환.
     * **Breaking Change:** Static 메서드 제거 및 생성자(`new`) 기반 초기화 도입.
     * **기능 추가:** 인스턴스별 작업 디렉토리 격리 (`~/.jpyrust/cam1`).

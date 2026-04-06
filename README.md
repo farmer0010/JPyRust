@@ -126,7 +126,7 @@ repositories {
 
 dependencies {
     // Latest stable version
-    implementation("com.github.farmer0010:JPyRust:v1.3.0")
+    implementation("com.github.farmer0010:JPyRust:v1.3.1")
 }
 ```
 
@@ -144,12 +144,13 @@ public class VisionService {
         JPyRustBridge cam1 = new JPyRustBridge("cam1");
         JPyRustBridge cam2 = new JPyRustBridge("cam2");
 
-        // 2. Initialize (Spawns workers in ~/.jpyrust/camX)
+        // 2. Initialize with defaults (Spawns workers in ~/.jpyrust/camX)
         cam1.initialize(); 
-        cam2.initialize(); 
+
+        // 2-1. (v1.3.1+) Initialize with custom model & confidence
+        cam2.initialize("/path/to/workdir", "custom_model.pt", 0.25f); 
 
         // 3. Process Images (Thread-Safe)
-        // arg: (imageData, length, width, height, channels)
         byte[] result1 = cam1.processImage(imgData1, len1, 640, 480, 3);
         byte[] result2 = cam2.processImage(imgData2, len2, 640, 480, 3);
         
@@ -179,7 +180,8 @@ public class VisionService {
 <details>
 <summary><strong>🐍 3. Python Dependency Issues</strong></summary>
 
-* JPyRust includes a **portable embedded Python**. It bootstraps itself in `~/.jpyrust/python_dist`.
+* **Windows:** JPyRust includes a **portable embedded Python**. It bootstraps itself in `~/.jpyrust/python_dist`.
+* **Linux/Docker (v1.3.1+):** JPyRust automatically detects Linux and uses the system `python3` instead of embedded Python. Ensure `python3` is installed (`apt-get install python3`).
 * If libraries are missing, check `requirements.txt` in the resource folder.
 </details>
 
@@ -187,7 +189,12 @@ public class VisionService {
 
 ## 📜 Version History
 
-* **v1.3.0 (Latest)** 🚀
+* **v1.3.1 (Latest)** 🐧
+    * **Linux/Docker Support:** `setupEmbeddedPython` now detects OS and uses system `python3` on Linux.
+    * **Custom Parameters:** New `initialize(workDir, modelPath, confidence)` overload for custom AI model configuration.
+    * **Backward Compatible:** Existing `initialize(workDir)` still works with defaults (`yolov8n.pt`, `0.5f`).
+
+* **v1.3.0** 🚀
     * **Major Refactor:** Switched to Multi-Instance Architecture.
     * **Breaking Change:** Removed static methods; added Constructor-based instantiation.
     * **Feature:** Isolated working directories per instance (`~/.jpyrust/cam1`).
