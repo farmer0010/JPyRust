@@ -20,6 +20,8 @@ public class JPyRustBridge {
         }
     }
 
+    private static final boolean IS_LINUX = !System.getProperty("os.name").toLowerCase().contains("win");
+
     private final String instanceId;
     private long nativePtr = 0;
     private boolean initialized = false;
@@ -38,11 +40,15 @@ public class JPyRustBridge {
     }
 
     public synchronized void initialize(String workDirectory) {
-        String memoryKey = "JPyRust_" + instanceId + "_" + java.util.UUID.randomUUID().toString();
-        initialize(workDirectory, memoryKey);
+        initialize(workDirectory, "yolov8n.pt", 0.5f);
     }
 
-    public synchronized void initialize(String workDirectory, String memoryKey) {
+    public synchronized void initialize(String workDirectory, String modelPath, float confidence) {
+        String memoryKey = "JPyRust_" + instanceId + "_" + java.util.UUID.randomUUID().toString();
+        initialize(workDirectory, modelPath, confidence, memoryKey);
+    }
+
+    public synchronized void initialize(String workDirectory, String modelPath, float confidence, String memoryKey) {
         if (initialized) {
             return;
         }
@@ -57,7 +63,7 @@ public class JPyRustBridge {
 
             setupEmbeddedPython(workPath);
 
-            initNative(workDir, workDir, "yolov8n.pt", 0.5f, memoryKey);
+            initNative(workDir, workDir, modelPath, confidence, memoryKey);
             initialized = true;
 
         } catch (Exception e) {
@@ -66,6 +72,11 @@ public class JPyRustBridge {
     }
 
     private void setupEmbeddedPython(Path targetDir) throws Exception {
+        if (IS_LINUX) {
+            setupLinuxPython(targetDir);
+            return;
+        }
+
         Path pythonDistDir = targetDir.resolve("python_dist");
         Path markerFile = pythonDistDir.resolve(".installed");
 
@@ -111,6 +122,51 @@ public class JPyRustBridge {
 
         this.pythonHome = pythonDistDir;
         this.pythonExe = pythonDistDir.resolve("python.exe");
+    }
+
+    private void setupLinuxPython(Path targetDir) throws Exception {
+        Path pythonDistDir = targetDir.resolve("python_dist");
+        if (!Files.exists(pythonDistDir)) {
+            Files.createDirectories(pythonDistDir);
+        }
+
+        Path markerFile = pythonDistDir.resolve(".installed");
+        if (!Files.exists(markerFile)) {
+            Files.createFile(markerFile);
+        }
+
+        Path systemPython = findSystemPython();
+        this.pythonHome = targetDir;
+        this.pythonExe = systemPython;
+    }
+
+    private Path findSystemPython() {
+        String[] candidates = {"/usr/bin/python3", "/usr/local/bin/python3", "/usr/bin/python"};
+        for (String candidate : candidates) {
+            Path path = Paths.get(candidate);
+            if (Files.exists(path)) {
+                return path;
+            }
+        }
+
+        try {
+            ProcessBuilder pb = new ProcessBuilder("which", "python3");
+            pb.redirectErrorStream(true);
+            Process proc = pb.start();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(proc.getInputStream()))) {
+                String line = reader.readLine();
+                if (line != null && !line.isEmpty()) {
+                    Path found = Paths.get(line.trim());
+                    if (Files.exists(found)) {
+                        return found;
+                    }
+                }
+            }
+            proc.waitFor();
+        } catch (Exception ignored) {
+        }
+
+        return Paths.get("/usr/bin/python3");
     }
 
     public void log(String level, String msg) {
