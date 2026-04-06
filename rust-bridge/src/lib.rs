@@ -57,12 +57,28 @@ impl BridgeState {
     }
 
     fn find_python_executable(&self) -> String {
-        let embedded_path = format!("{}/python_dist/python.exe", self.work_dir);
-        if std::path::Path::new(&embedded_path).exists() {
-            return embedded_path;
+        let candidates = [
+            format!("{}/python_dist/python.exe", self.work_dir),
+            format!("{}/python_dist/python3", self.work_dir),
+        ];
+        for path in &candidates {
+            if std::path::Path::new(path).exists() {
+                return path.clone();
+            }
         }
-        self.log_to_java("WARN", "[Rust] Embedded Python not found. Falling back to 'python'.");
-        "python".to_string()
+
+        let system_candidates = ["python3", "python"];
+        for cmd in &system_candidates {
+            let check = Command::new("which").arg(cmd).output();
+            if let Ok(output) = check {
+                if output.status.success() {
+                    return cmd.to_string();
+                }
+            }
+        }
+
+        self.log_to_java("WARN", "[Rust] No Python executable found. Falling back to 'python3'.");
+        "python3".to_string()
     }
 
     fn spawn_python_daemon(&self) -> Result<PythonDaemon, String> {
