@@ -1,12 +1,12 @@
 use jni::JNIEnv;
 use jni::JavaVM;
-use jni::objects::{JClass, JByteBuffer, JString, JObject};
+use jni::objects::{JByteBuffer, JString, JObject};
 use jni::sys::{jint, jbyteArray, jlong};
 use std::fs::File;
 use std::io::{Read, Write, BufRead, BufReader, BufWriter};
 use std::process::{Command, Child, Stdio, ChildStdin, ChildStdout};
 use std::sync::Mutex;
-use shared_memory::ShmemConf;
+
 
 const OUTPUT_SHM_SIZE: usize = 1024 * 1024;
 
@@ -14,6 +14,13 @@ struct PythonDaemon {
     child: Child,
     stdin: BufWriter<ChildStdin>,
     stdout: BufReader<ChildStdout>,
+}
+
+impl Drop for PythonDaemon {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
 }
 
 struct BridgeState {
@@ -56,6 +63,7 @@ impl BridgeState {
         }
     }
 
+    #[cfg(target_os = "windows")]
     fn find_python_executable(&self) -> String {
         let embedded_path = format!("{}/python_dist/python.exe", self.work_dir);
         if std::path::Path::new(&embedded_path).exists() {
@@ -63,6 +71,16 @@ impl BridgeState {
         }
         self.log_to_java("WARN", "[Rust] Embedded Python not found. Falling back to 'python'.");
         "python".to_string()
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn find_python_executable(&self) -> String {
+        let venv_path = format!("{}/venv/bin/python3", self.work_dir);
+        if std::path::Path::new(&venv_path).exists() {
+            return venv_path;
+        }
+        self.log_to_java("WARN", "[Rust] venv Python not found. Falling back to 'python3'.");
+        "python3".to_string()
     }
 
     fn spawn_python_daemon(&self) -> Result<PythonDaemon, String> {
@@ -228,20 +246,28 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_executeTask<'local>(
         return execute_with_file_fallback(&mut env, state, &task_type_str, &request_id_str, &metadata_str, data);
     }
 
-    let shm_name_in = format!("{}_{}", state.session_key, &request_id_str[..8.min(request_id_str.len())]);
+    let shm_name_in = format!("{}_{}", state.session_key, &request_id_str[..6.min(request_id_str.len())]);
     let mut shm_in = match create_shmem_permissive(&shm_name_in, length) {
         Ok(m) => m,
-        Err(_) => return execute_with_file_fallback(&mut env, state, &task_type_str, &request_id_str, &metadata_str, data),
+        Err(e) => {
+            eprintln!("[JPyRust-Native] SHMEM-IN creation failed: {}", e);
+            return execute_with_file_fallback(&mut env, state, &task_type_str, &request_id_str, &metadata_str, data);
+        }
     };
 
     unsafe { shm_in.as_slice_mut()[..length].copy_from_slice(data); }
 
-    let shm_name_out = format!("{}_out_{}", state.session_key, &request_id_str[..8.min(request_id_str.len())]);
+    let shm_name_out = format!("{}_out_{}", state.session_key, &request_id_str[..6.min(request_id_str.len())]);
     let shm_out = match create_shmem_permissive(&shm_name_out, OUTPUT_SHM_SIZE) {
         Ok(m) => m,
-        Err(_) => return execute_with_file_fallback(&mut env, state, &task_type_str, &request_id_str, &metadata_str, data),
+        Err(e) => {
+            eprintln!("[JPyRust-Native] SHMEM-OUT creation failed: {}", e);
+            return execute_with_file_fallback(&mut env, state, &task_type_str, &request_id_str, &metadata_str, data);
+        }
     };
 
+    eprintln!("[JPyRust-Native] [IPC] Mode: SHMEM | Task: {} | ReqID: {}", task_type_str, request_id_str);
+    state.log_to_java("INFO", &format!("[IPC] Mode: SHMEM | Task: {} | ReqID: {}", task_type_str, &request_id_str[..6.min(request_id_str.len())]));
     let shmem_metadata = format!("SHMEM {} {} {} {} {}", shm_name_in, length, shm_name_out, OUTPUT_SHM_SIZE, metadata_str);
 
     let mut final_result_len = 0;
@@ -280,6 +306,8 @@ fn execute_with_file_fallback(
     metadata: &str,
     data: &[u8],
 ) -> jbyteArray {
+    eprintln!("[JPyRust-Native] [IPC] Mode: FILE-FALLBACK | Task: {} | ReqID: {}", task_type, request_id);
+    state.log_to_java("WARN", &format!("[IPC] Mode: FILE-FALLBACK | Task: {} | ReqID: {}", task_type, &request_id[..8.min(request_id.len())]));
     let input_file = format!("{}/input_{}.dat", state.work_dir, request_id);
     let output_file = format!("{}/output_{}.dat", state.work_dir, request_id);
     
@@ -315,12 +343,72 @@ fn execute_with_file_fallback(
     }
 }
 
+#[no_mangle]
+pub extern "system" fn Java_com_jpyrust_JPyRustBridge_closeNative<'local>(
+    mut env: JNIEnv<'local>,
+    obj: JObject<'local>,
+) {
+    let state_ptr_value = match env.get_field(&obj, "nativePtr", "J") {
+        Ok(v) => v.j().unwrap_or(0),
+        Err(_) => return,
+    };
+    
+    if state_ptr_value == 0 { return; }
+
+    let state_ptr = state_ptr_value as *mut BridgeState;
+    unsafe {
+        let _ = Box::from_raw(state_ptr); // This triggers Drop for BridgeState -> PythonDaemon -> child.kill()
+    }
+    
+    // Set nativePtr to 0 to prevent double-free
+    let _ = env.set_field(&obj, "nativePtr", "J", jni::objects::JValue::Long(0));
+}
+
 #[cfg(target_os = "windows")]
-fn create_shmem_permissive(name: &str, size: usize) -> Result<shared_memory::Shmem, String> {
-    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE, GetLastError, LocalFree};
+struct CustomShmem {
+    handle: isize,
+    map_ptr: *mut u8,
+    size: usize,
+}
+
+#[cfg(target_os = "windows")]
+unsafe impl Send for CustomShmem {}
+#[cfg(target_os = "windows")]
+unsafe impl Sync for CustomShmem {}
+
+#[cfg(target_os = "windows")]
+impl CustomShmem {
+    unsafe fn as_slice(&self) -> &[u8] {
+        std::slice::from_raw_parts(self.map_ptr, self.size)
+    }
+    unsafe fn as_slice_mut(&mut self) -> &mut [u8] {
+        std::slice::from_raw_parts_mut(self.map_ptr, self.size)
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for CustomShmem {
+    fn drop(&mut self) {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::Memory::{UnmapViewOfFile, MEMORY_MAPPED_VIEW_ADDRESS};
+        unsafe {
+            if !self.map_ptr.is_null() {
+                let addr = MEMORY_MAPPED_VIEW_ADDRESS { Value: self.map_ptr as *mut std::ffi::c_void };
+                UnmapViewOfFile(addr);
+            }
+            if self.handle != 0 {
+                CloseHandle(self.handle);
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn create_shmem_permissive(name: &str, size: usize) -> Result<CustomShmem, String> {
+    use windows_sys::Win32::Foundation::{INVALID_HANDLE_VALUE, GetLastError, LocalFree};
     use windows_sys::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
     use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
-    use windows_sys::Win32::System::Memory::{CreateFileMappingW, PAGE_READWRITE};
+    use windows_sys::Win32::System::Memory::{CreateFileMappingW, MapViewOfFile, PAGE_READWRITE, FILE_MAP_ALL_ACCESS};
     use std::ptr;
     use std::ffi::c_void;
 
@@ -328,7 +416,9 @@ fn create_shmem_permissive(name: &str, size: usize) -> Result<shared_memory::Shm
         let mut sd: *mut c_void = ptr::null_mut();
         let sddl = "D:(A;;GA;;;WD)\0".encode_utf16().collect::<Vec<u16>>();
         if ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.as_ptr(), 1, &mut sd, ptr::null_mut()) == 0 {
-             return Err(format!("SDDL failed: {}", GetLastError()));
+            let err = GetLastError();
+            eprintln!("[JPyRust-Native] SDDL conversion failed: error {}", err);
+            return Err(format!("SDDL failed: {}", err));
         }
         let mut sa = SECURITY_ATTRIBUTES {
             nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
@@ -337,18 +427,38 @@ fn create_shmem_permissive(name: &str, size: usize) -> Result<shared_memory::Shm
         };
         let name_wide = name.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
         let h_map = CreateFileMappingW(INVALID_HANDLE_VALUE, &mut sa, PAGE_READWRITE, 0, size as u32, name_wide.as_ptr());
-        let res = if h_map == 0 { Err(format!("Mapping failed: {}", GetLastError())) } 
-        else { shared_memory::ShmemConf::new().os_id(name).open().map_err(|e| e.to_string()) };
-        if h_map != 0 { CloseHandle(h_map); }
         LocalFree(sd);
-        res
+
+        if h_map == 0 {
+            let err = GetLastError();
+            eprintln!("[JPyRust-Native] CreateFileMappingW failed: error {}", err);
+            return Err(format!("Mapping failed: {}", err));
+        }
+
+        let view = MapViewOfFile(h_map, FILE_MAP_ALL_ACCESS, 0, 0, size);
+        let map_ptr = view.Value as *mut u8;
+        if map_ptr.is_null() {
+            let err = GetLastError();
+            use windows_sys::Win32::Foundation::CloseHandle;
+            CloseHandle(h_map);
+            eprintln!("[JPyRust-Native] MapViewOfFile failed: error {}", err);
+            return Err(format!("MapViewOfFile failed: {}", err));
+        }
+
+        Ok(CustomShmem {
+            handle: h_map,
+            map_ptr,
+            size,
+        })
     }
 }
 
 #[cfg(not(target_os = "windows"))]
 fn create_shmem_permissive(name: &str, size: usize) -> Result<shared_memory::Shmem, String> {
-    shared_memory::ShmemConf::new().size(size).os_id(name).create().map_err(|e| e.to_string())
+    let os_id = format!("/{}", name);
+    shared_memory::ShmemConf::new().size(size).os_id(os_id).create().map_err(|e| e.to_string())
 }
+
 
 fn write_data_file(path: &str, data: &[u8]) -> std::io::Result<()> {
     let mut file = File::create(path)?;

@@ -97,6 +97,23 @@ public class NativeLoader {
         }
     }
 
+    public static void extractFile(String resourcePath, Path targetFile) {
+        try {
+            InputStream is = NativeLoader.class.getResourceAsStream(resourcePath);
+            if (is == null) {
+                throw new FileNotFoundException("Resource not found: " + resourcePath);
+            }
+            if (targetFile.getParent() != null) {
+                Files.createDirectories(targetFile.getParent());
+            }
+            try (is) {
+                Files.copy(is, targetFile, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to extract resource: " + resourcePath, e);
+        }
+    }
+
     public static Path extractZip(String resourcePath, Path targetDir) {
         try {
             if (!Files.exists(targetDir)) {

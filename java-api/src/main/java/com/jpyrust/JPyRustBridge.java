@@ -9,6 +9,8 @@ import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.util.Locale;
 
 public class JPyRustBridge {
 
@@ -38,7 +40,7 @@ public class JPyRustBridge {
     }
 
     public synchronized void initialize(String workDirectory) {
-        String memoryKey = "JPyRust_" + instanceId + "_" + java.util.UUID.randomUUID().toString();
+        String memoryKey = "JR" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 10);
         initialize(workDirectory, memoryKey);
     }
 
@@ -66,6 +68,24 @@ public class JPyRustBridge {
     }
 
     private void setupEmbeddedPython(Path targetDir) throws Exception {
+        boolean isWindows = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
+
+        if (isWindows) {
+            setupWindowsEmbeddedPython(targetDir);
+        } else {
+            setupSystemVenvPython(targetDir);
+        }
+
+        Path workerScript = targetDir.resolve("ai_worker.py");
+        if (!Files.exists(workerScript)) {
+            Path bundled = pythonHome.resolve("ai_worker.py");
+            if (Files.exists(bundled)) {
+                Files.copy(bundled, workerScript, StandardCopyOption.REPLACE_EXISTING);
+            }
+        }
+    }
+
+    private void setupWindowsEmbeddedPython(Path targetDir) throws Exception {
         Path pythonDistDir = targetDir.resolve("python_dist");
         Path markerFile = pythonDistDir.resolve(".installed");
 
@@ -75,6 +95,8 @@ public class JPyRustBridge {
                     (Files.exists(sitePackages.resolve("ultralytics"))
                             || Files.exists(sitePackages.resolve("torch")))) {
                 Files.createFile(markerFile);
+                this.pythonHome = pythonDistDir;
+                this.pythonExe = pythonDistDir.resolve("python.exe");
                 return;
             }
 
@@ -113,12 +135,74 @@ public class JPyRustBridge {
         this.pythonExe = pythonDistDir.resolve("python.exe");
     }
 
+    private void setupSystemVenvPython(Path targetDir) throws Exception {
+        Path markerFile = targetDir.resolve(".installed");
+        Path venvDir = targetDir.resolve("venv");
+        Path venvPython = venvDir.resolve("bin/python3");
+
+        NativeLoader.extractFile("/ai_worker.py", targetDir.resolve("ai_worker.py"));
+        Path requirements = targetDir.resolve("requirements.txt");
+        NativeLoader.extractFile("/requirements.txt", requirements);
+
+        if (!Files.exists(markerFile)) {
+            String systemPython = findSystemPython3();
+
+            ProcessBuilder venvPb = new ProcessBuilder(systemPython, "-m", "venv", venvDir.toString());
+            venvPb.redirectErrorStream(true);
+            Process venvProc = venvPb.start();
+            drainQuietly(venvProc);
+            if (venvProc.waitFor() != 0) {
+                throw new RuntimeException("Failed to create Python venv using: " + systemPython);
+            }
+
+            ProcessBuilder pipPb = new ProcessBuilder(
+                    venvPython.toString(), "-m", "pip", "install", "-r", requirements.toString());
+            pipPb.directory(targetDir.toFile());
+            pipPb.redirectErrorStream(true);
+            Process pipProc = pipPb.start();
+            drainQuietly(pipProc);
+            if (pipProc.waitFor() != 0) {
+                throw new RuntimeException("pip install failed for requirements.txt in " + venvDir);
+            }
+
+            Files.createFile(markerFile);
+        }
+
+        this.pythonHome = targetDir;
+        this.pythonExe = venvPython;
+    }
+
+    private String findSystemPython3() {
+        for (String candidate : new String[] { "python3.12", "python3.11", "python3.13", "python3" }) {
+            try {
+                Process p = new ProcessBuilder(candidate, "--version").redirectErrorStream(true).start();
+                drainQuietly(p);
+                if (p.waitFor() == 0) {
+                    return candidate;
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        throw new RuntimeException("No usable python3 interpreter found on PATH");
+    }
+
+    private void drainQuietly(Process process) throws Exception {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                log("DEBUG", line);
+            }
+        }
+    }
+
     public void log(String level, String msg) {
         System.out.println("[JPyRust-" + instanceId + "] [" + level + "] " + msg);
     }
 
     private native void initNative(String workDir, String sourceScriptDir, String modelPath, float confidence,
             String memoryKey);
+
+    private native void closeNative();
 
     private native byte[] executeTask(String workDir, String taskType, String requestId, String metadata,
             ByteBuffer data, int length);
@@ -194,8 +278,10 @@ public class JPyRustBridge {
     }
 
     public String runPythonRaw(ByteBuffer data, int length, int width, int height, int channels) {
-        String inputFilePath = workDir + "/input_image.dat";
-        String outputFilePath = workDir + "/output_image.dat";
+        String requestId = java.util.UUID.randomUUID().toString();
+        String inputFilePath = workDir + "/input_" + requestId + ".dat";
+        String outputFilePath = workDir + "/output_" + requestId + ".dat";
+        Path scriptPath = Paths.get(workDir, "ai_worker.py");
 
         try {
             byte[] inputBuffer = new byte[length];
@@ -218,23 +304,37 @@ public class JPyRustBridge {
 
             ProcessBuilder pb = new ProcessBuilder(
                     pythonExe.toString(),
-                    pythonHome.resolve("ai_worker.py").toString(),
-                    String.valueOf(width),
-                    String.valueOf(height),
-                    String.valueOf(channels));
-
-            pb.redirectErrorStream(true);
+                    scriptPath.toString(),
+                    "--daemon",
+                    "--instance-id", instanceId);
+            pb.redirectErrorStream(false);
             Process process = pb.start();
 
-            StringBuilder output = new StringBuilder();
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    output.append(line).append("\n");
+            String response;
+            try (BufferedReader stdout = new BufferedReader(new InputStreamReader(process.getInputStream()));
+                    java.io.OutputStream stdin = process.getOutputStream()) {
+
+                String ready = stdout.readLine();
+                if (ready == null || !ready.trim().equals("READY")) {
+                    process.destroyForcibly();
+                    return "Error: Python worker did not signal READY (got: " + ready + ")";
                 }
+
+                String command = "EXECUTE YOLO " + requestId + " " + width + " " + height + " " + channels + "\n";
+                stdin.write(command.getBytes("UTF-8"));
+                stdin.flush();
+
+                response = stdout.readLine();
+
+                stdin.write("EXIT\n".getBytes("UTF-8"));
+                stdin.flush();
             }
 
             process.waitFor();
+
+            if (response == null || !response.startsWith("DONE")) {
+                return "Error: Python worker did not complete the task (got: " + response + ")";
+            }
 
             if (!outputFile.exists()) {
                 return "Error: Python did not create output file";
@@ -262,10 +362,20 @@ public class JPyRustBridge {
             data.put(outputBuffer);
             data.flip();
 
-            return output.toString().trim();
+            return response;
 
         } catch (Exception e) {
             return "Error interacting with Python: " + e.getMessage();
+        } finally {
+            new File(inputFilePath).delete();
+            new File(outputFilePath).delete();
+        }
+    }
+
+    public synchronized void close() {
+        if (initialized) {
+            closeNative();
+            initialized = false;
         }
     }
 }

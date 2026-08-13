@@ -1,11 +1,11 @@
 # 🚀 JPyRust: High-Performance Universal AI Bridge
 
-> **"The Ultimate Python AI Integration for Java: Reducing 7s latency to 0.04s."**
+> **"A persistent Python worker for Java, reached over JNI + shared memory instead of a subprocess per call."**
 
 [![Build Status](https://img.shields.io/github/actions/workflow/status/farmer0010/JPyRust/build.yml?style=flat-square&logo=github&label=Build)](https://github.com/farmer0010/JPyRust/actions)
 [![Release](https://img.shields.io/github/v/release/farmer0010/JPyRust?style=flat-square&color=blue&label=Release)](https://jitpack.io/#farmer0010/JPyRust)
 [![License](https://img.shields.io/github/license/farmer0010/JPyRust?style=flat-square&color=green)](LICENSE)
-![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-lightgrey?style=flat-square)
+![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey?style=flat-square)
 
 <p align="center">
   <a href="https://openjdk.org/">
@@ -104,13 +104,24 @@ sequenceDiagram
 
 ## ⚡ Performance Benchmark
 
-| Architecture | Communication | Latency (Avg) | Throughput | Stability |
-| :--- | :--- | :---: | :---: | :---: |
-| **CLI (ProcessBuilder)** | Stdin/Stdout | ~1,500ms | 🔴 Low | 🔴 Low (JVM Blocking) |
-| **HTTP (FastAPI/Flask)** | REST API | ~100ms | 🟡 Medium | 🟢 High |
-| **JPyRust v1.3.0** | **Shared Memory** | **🟢 ~40ms** | **🟢 High (Parallel)** | **🟢 High (Isolated)** |
+A real, runnable benchmark ships with the repo: [`LatencyBenchmark.java`](java-api/src/test/java/com/jpyrust/LatencyBenchmark.java). It runs real YOLOv8n inference on an actual image (`sample.png`), 10 iterations after warmup, comparing:
+- **Legacy Subprocess** — spawns a brand-new Python interpreter (full torch/ultralytics import + model load) for every single call.
+- **JPyRust (JNI + SHMEM)** — reuses one persistent Python daemon with the model already loaded; only the image crosses via shared memory.
 
-> *Benchmark Env: Ryzen 5 5600X, 32GB RAM, NVIDIA RTX 3060, YOLOv8n Model*
+| Architecture | Communication | Latency (Avg, measured) |
+| :--- | :--- | :---: |
+| Legacy Subprocess (cold spawn per call) | Stdin/Stdout | ~2,330 ms |
+| JPyRust (JNI + SHMEM, persistent daemon) | Shared Memory | ~6 ms |
+
+> *Measured on: Apple Silicon (arm64), macOS, PyTorch with MPS (Metal) acceleration, Python 3.12. ~390x faster, consistent across repeated runs.*
+
+Nearly all of the "legacy" cost is one-time interpreter/library/model-load overhead (torch + ultralytics import, `YOLO(...)` construction) paid on *every single call* — the actual inference itself is only a few milliseconds. The daemon architecture pays that cost once at startup instead of per-request, which is the entire point of keeping a persistent worker around. Run `LatencyBenchmark` yourself to reproduce this against your own hardware — numbers will vary with CPU/GPU and image size, but the shape of the result (overhead dominates, not compute) should hold generally.
+
+<details>
+<summary><strong>A note on getting this number honestly</strong></summary>
+
+Earlier drafts of this benchmark quietly measured the wrong thing on macOS: a POSIX shared-memory naming mismatch between Rust and Python made every SHMEM call silently fail and fall through a 15-attempt retry loop (~1.8s of pure backoff, not compute), and the benchmark fed it random bytes instead of a real image, so `cv2.imdecode` failed instantly on both paths without ever running inference. Both are fixed now — see [Version History](#-version-history).
+</details>
 
 ---
 
@@ -179,7 +190,8 @@ public class VisionService {
 <details>
 <summary><strong>🐍 3. Python Dependency Issues</strong></summary>
 
-* JPyRust includes a **portable embedded Python**. It bootstraps itself in `~/.jpyrust/python_dist`.
+* **Windows:** JPyRust includes a **portable embedded Python**. It bootstraps itself in `~/.jpyrust/<instanceId>/python_dist`.
+* **macOS / Linux:** there is no portable embedded Python for these platforms, so JPyRust instead looks for a `python3` on your `PATH` (tries `python3.12`, `python3.11`, `python3.13`, then `python3`) and provisions a private virtualenv at `~/.jpyrust/<instanceId>/venv`, installing `requirements.txt` into it. This runs once per instance directory (tracked by a `.installed` marker) — delete that directory to force a clean reinstall.
 * If libraries are missing, check `requirements.txt` in the resource folder.
 </details>
 
@@ -187,7 +199,16 @@ public class VisionService {
 
 ## 📜 Version History
 
-* **v1.3.0 (Latest)** 🚀
+* **Unreleased**
+    * **Fix:** macOS/Linux now provision a real Python venv instead of unconditionally extracting the Windows-only embedded distribution (which silently couldn't run on those platforms).
+    * **Fix:** Shared memory names Rust creates on macOS/Linux never matched what Python's `multiprocessing.shared_memory` looked for (`shm_open()` needs a leading `/`, and the Rust side wasn't adding one), so every SHMEM call on macOS silently failed and burned ~1.8s exhausting a retry loop before giving up. Names now match on both sides.
+    * **Fix:** Shared memory segment names could also exceed macOS's 31-character `shm_open` limit. Names are now kept short on all platforms.
+    * **Fix:** The native daemon looked for `ai_worker.py` directly under the instance work dir, but it was only ever staged inside `python_dist/` — the daemon could never find it. The worker script is now placed at the expected path on every platform.
+    * **Fix:** The legacy subprocess benchmark path called `ai_worker.py` with a calling convention it no longer supports (positional args instead of the daemon's stdin protocol), which hung forever. It now speaks the same EXECUTE/stdin protocol as the daemon.
+    * **Fix:** `ai_worker.py` only checked `torch.cuda.is_available()`, so it never used Apple's Metal (MPS) backend on Apple Silicon — it now also tries `mps` before falling back to `cpu`.
+    * **Fix:** The benchmark sent random bytes as "image data" into a YOLO task that decodes via `cv2.imdecode()`, which fails instantly on non-image bytes — so it never actually ran inference on either path. It now sends a real image.
+
+* **v1.3.0**
     * **Major Refactor:** Switched to Multi-Instance Architecture.
     * **Breaking Change:** Removed static methods; added Constructor-based instantiation.
     * **Feature:** Isolated working directories per instance (`~/.jpyrust/cam1`).

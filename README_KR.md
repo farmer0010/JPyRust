@@ -1,11 +1,11 @@
 # 🚀 JPyRust: 고성능 유니버설 AI 브리지
 
-> **"Java를 위한 궁극의 Python AI 통합 솔루션: 7초 지연 시간을 0.04초로 단축."**
+> **"매 호출마다 서브프로세스를 띄우는 대신, JNI + 공유 메모리로 상시 대기 중인 Python 워커에 접근합니다."**
 
 [![Build Status](https://img.shields.io/github/actions/workflow/status/farmer0010/JPyRust/build.yml?style=flat-square&logo=github&label=Build)](https://github.com/farmer0010/JPyRust/actions)
 [![Release](https://img.shields.io/github/v/release/farmer0010/JPyRust?style=flat-square&color=blue&label=Release)](https://jitpack.io/#farmer0010/JPyRust)
 [![License](https://img.shields.io/github/license/farmer0010/JPyRust?style=flat-square&color=green)](LICENSE)
-![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-lightgrey?style=flat-square)
+![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey?style=flat-square)
 
 <p align="center">
   <a href="https://openjdk.org/">
@@ -104,13 +104,24 @@ sequenceDiagram
 
 ## ⚡ 성능 벤치마크
 
-| 아키텍처 | 통신 방식 | 지연 시간 (평균) | 처리량 | 안정성 |
-| :--- | :--- | :---: | :---: | :---: |
-| **CLI (ProcessBuilder)** | 표준 입출력 (Stdin/Out) | ~1,500ms | 🔴 낮음 | 🔴 낮음 (JVM 블로킹) |
-| **HTTP (FastAPI/Flask)** | REST API | ~100ms | 🟡 보통 | 🟢 높음 |
-| **JPyRust v1.3.0** | **공유 메모리 (SHMEM)** | **🟢 ~40ms** | **🟢 높음 (병렬 처리)** | **🟢 높음 (프로세스 격리)** |
+직접 돌려볼 수 있는 실측 벤치마크가 레포에 포함되어 있습니다: [`LatencyBenchmark.java`](java-api/src/test/java/com/jpyrust/LatencyBenchmark.java). 실제 이미지(`sample.png`)에 대해 진짜 YOLOv8n 추론을 워밍업 후 10회 반복하며 다음 두 방식을 비교합니다.
+- **레거시 Subprocess** — 호출할 때마다 새 Python 인터프리터를 띄우고 torch/ultralytics를 처음부터 임포트 + 모델 로드.
+- **JPyRust (JNI + SHMEM)** — 모델이 이미 로드된 상시 대기 데몬 하나를 재사용하고, 이미지만 공유 메모리로 오갑니다.
 
-> *테스트 환경: Ryzen 5 5600X, 32GB RAM, NVIDIA RTX 3060, YOLOv8n 모델*
+| 아키텍처 | 통신 방식 | 지연 시간 (평균, 실측) |
+| :--- | :--- | :---: |
+| 레거시 Subprocess (매번 새 프로세스) | 표준 입출력 (Stdin/Out) | ~2,330ms |
+| JPyRust (JNI + SHMEM, 상시 데몬) | 공유 메모리 (SHMEM) | ~6ms |
+
+> *테스트 환경: Apple Silicon(arm64), macOS, PyTorch MPS(Metal) 가속, Python 3.12. 약 390배 차이이며 반복 실행에서도 일관되게 재현됨.*
+
+"레거시" 쪽 시간의 거의 대부분은 매 호출마다 반복되는 1회성 오버헤드(torch/ultralytics 임포트, `YOLO(...)` 모델 생성)이고, 실제 추론 자체는 몇 ms에 불과합니다. 데몬 아키텍처는 그 비용을 요청마다가 아니라 시작 시 딱 한 번만 지불하는데, 이게 바로 상시 워커를 두는 이유 그 자체입니다. 직접 여러분 하드웨어에서 `LatencyBenchmark`를 돌려보시면 됩니다 — CPU/GPU, 이미지 크기에 따라 절대 수치는 달라지겠지만 "연산이 아니라 오버헤드가 지배한다"는 구조 자체는 일반적으로 유지될 겁니다.
+
+<details>
+<summary><strong>이 수치를 정직하게 얻기까지</strong></summary>
+
+이전 버전의 벤치마크는 macOS에서 조용히 엉뚱한 걸 측정하고 있었습니다. Rust와 Python 사이의 POSIX 공유메모리 이름 불일치 때문에 모든 SHMEM 호출이 조용히 실패해서 15번 재시도 루프(순수 대기시간 ~1.8초, 연산 아님)를 타고 있었고, 벤치마크가 실제 이미지 대신 랜덤 바이트를 보내고 있어서 `cv2.imdecode`가 두 경로 모두에서 즉시 실패해 추론 자체가 한 번도 실행되지 않았습니다. 둘 다 지금은 고쳤습니다 — [버전 히스토리](#-버전-히스토리) 참고.
+</details>
 
 ---
 
@@ -179,7 +190,8 @@ public class VisionService {
 <details>
 <summary><strong>🐍 3. Python 의존성 문제</strong></summary>
 
-* JPyRust는 **포터블 임베디드 Python**을 내장하고 있으며, `~/.jpyrust/python_dist`에 자동으로 설치됩니다.
+* **Windows:** JPyRust는 **포터블 임베디드 Python**을 내장하고 있으며, `~/.jpyrust/<instanceId>/python_dist`에 자동으로 설치됩니다.
+* **macOS / Linux:** 이 플랫폼용 포터블 임베디드 Python은 없어서, `PATH`에서 `python3`을 찾고(`python3.12` → `python3.11` → `python3.13` → `python3` 순으로 시도) `~/.jpyrust/<instanceId>/venv`에 전용 venv를 만들어 `requirements.txt`를 설치합니다. 인스턴스 디렉터리당 한 번만 실행되며(`.installed` 마커로 추적), 새로 설치하려면 해당 디렉터리를 지우면 됩니다.
 * 라이브러리가 부족하다면 `resources` 폴더의 `requirements.txt`를 확인하세요.
 </details>
 
@@ -187,7 +199,16 @@ public class VisionService {
 
 ## 📜 버전 히스토리
 
-* **v1.3.0 (최신)** 🚀
+* **Unreleased**
+    * **수정:** macOS/Linux에서 (동작 불가능한) Windows 전용 임베디드 배포판을 무조건 풀던 것을, 실제로 동작하는 Python venv를 구성하도록 수정.
+    * **수정:** Rust가 macOS/Linux에서 만드는 공유 메모리 이름이 Python `multiprocessing.shared_memory`가 찾는 이름과 애초에 달랐습니다(`shm_open()`은 앞에 `/`가 필요한데 Rust 쪽에서 안 붙이고 있었음) — macOS의 모든 SHMEM 호출이 조용히 실패해서 15회 재시도 루프로 ~1.8초를 허비하고 있었습니다. 이제 양쪽 이름이 일치합니다.
+    * **수정:** 공유 메모리 세그먼트 이름이 macOS의 `shm_open` 31자 제한을 넘는 문제도 있었음. 모든 플랫폼에서 이름을 짧게 유지하도록 변경.
+    * **수정:** 네이티브 데몬이 `ai_worker.py`를 작업 디렉터리 바로 아래에서 찾았지만, 실제로는 `python_dist/` 안에만 배치되어 있어 데몬이 절대 찾을 수 없었던 경로 불일치 버그 수정.
+    * **수정:** 레거시 subprocess 벤치마크 경로가 더 이상 지원되지 않는 방식(위치 인자)으로 `ai_worker.py`를 호출해서 무한 대기하던 버그 수정 — 이제 데몬과 동일한 EXECUTE/stdin 프로토콜을 사용합니다.
+    * **수정:** `ai_worker.py`가 `torch.cuda.is_available()`만 확인해서 Apple Silicon의 Metal(MPS) 백엔드를 전혀 못 쓰고 있었음 — 이제 `mps`도 시도한 뒤 `cpu`로 폴백합니다.
+    * **수정:** 벤치마크가 `cv2.imdecode()`로 디코딩하는 YOLO 태스크에 랜덤 바이트를 "이미지 데이터"로 보내고 있어서 즉시 디코딩 실패로 끝나고, 두 경로 모두 실제 추론을 한 번도 실행하지 않고 있었음 — 이제 실제 이미지를 보냅니다.
+
+* **v1.3.0**
     * **대규모 리팩토링:** 멀티 인스턴스(Multi-Instance) 아키텍처로 전환.
     * **Breaking Change:** Static 메서드 제거 및 생성자(`new`) 기반 초기화 도입.
     * **기능 추가:** 인스턴스별 작업 디렉토리 격리 (`~/.jpyrust/cam1`).

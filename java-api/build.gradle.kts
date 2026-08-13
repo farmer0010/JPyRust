@@ -1,10 +1,22 @@
 plugins {
     `java-library`
+    `maven-publish`
 }
 
 import java.net.URI
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+
+publishing {
+    publications {
+        create<MavenPublication>("mavenJava") {
+            groupId = "com.github.farmer0010"
+            artifactId = "JPyRust"
+            version = "v1.3.1"
+            from(components["java"])
+        }
+    }
+}
 
 
 repositories {
@@ -153,15 +165,28 @@ val zipPythonDist = tasks.register<Zip>("zipPythonDist") {
     onlyIf { System.getenv("JITPACK") == null }
 }
 
+val stageCommonPythonResources = tasks.register<Copy>("stageCommonPythonResources") {
+    group = "python"
+    description = "Copies ai_worker.py and requirements.txt as plain resources for the non-Windows venv bootstrap"
+
+    from(pythonCoreDir) { include("ai_worker.py") }
+    from(requirementsFile.parentFile) { include("requirements.txt") }
+    into(generatedResourcesDir.map { it.dir("common") })
+}
+
 // Task 4: Hook into processResources
 tasks.named<ProcessResources>("processResources") {
-    dependsOn(zipPythonDist)
-    
+    dependsOn(zipPythonDist, stageCommonPythonResources)
+
     // Exclude the raw directory structure from finalized JAR
     exclude("python_dist/**")
-    
+
     // Include the generated ZIP from build directory
     from(zipPythonDist.map { it.destinationDirectory }) {
         include("python_dist.zip")
+    }
+
+    from(stageCommonPythonResources.map { it.destinationDir }) {
+        include("ai_worker.py", "requirements.txt")
     }
 }
