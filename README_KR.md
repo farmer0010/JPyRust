@@ -117,12 +117,6 @@ sequenceDiagram
 
 "레거시" 쪽 시간의 거의 대부분은 매 호출마다 반복되는 1회성 오버헤드(torch/ultralytics 임포트, `YOLO(...)` 모델 생성)이고, 실제 추론 자체는 몇 ms에 불과합니다. 데몬 아키텍처는 그 비용을 요청마다가 아니라 시작 시 딱 한 번만 지불하는데, 이게 바로 상시 워커를 두는 이유 그 자체입니다. 직접 여러분 하드웨어에서 `LatencyBenchmark`를 돌려보시면 됩니다 — CPU/GPU, 이미지 크기에 따라 절대 수치는 달라지겠지만 "연산이 아니라 오버헤드가 지배한다"는 구조 자체는 일반적으로 유지될 겁니다.
 
-<details>
-<summary><strong>이 수치를 정직하게 얻기까지</strong></summary>
-
-이전 버전의 벤치마크는 macOS에서 조용히 엉뚱한 걸 측정하고 있었습니다. Rust와 Python 사이의 POSIX 공유메모리 이름 불일치 때문에 모든 SHMEM 호출이 조용히 실패해서 15번 재시도 루프(순수 대기시간 ~1.8초, 연산 아님)를 타고 있었고, 벤치마크가 실제 이미지 대신 랜덤 바이트를 보내고 있어서 `cv2.imdecode`가 두 경로 모두에서 즉시 실패해 추론 자체가 한 번도 실행되지 않았습니다. 둘 다 지금은 고쳤습니다 — [버전 히스토리](#-버전-히스토리) 참고.
-</details>
-
 ---
 
 ## 🚀 빠른 시작 (Quick Start)
@@ -202,13 +196,10 @@ public class VisionService {
 ## 📜 버전 히스토리
 
 * **Unreleased**
-    * **수정:** macOS/Linux에서 (동작 불가능한) Windows 전용 임베디드 배포판을 무조건 풀던 것을, 실제로 동작하는 Python venv를 구성하도록 수정.
-    * **수정:** Rust가 macOS/Linux에서 만드는 공유 메모리 이름이 Python `multiprocessing.shared_memory`가 찾는 이름과 애초에 달랐습니다(`shm_open()`은 앞에 `/`가 필요한데 Rust 쪽에서 안 붙이고 있었음) — macOS의 모든 SHMEM 호출이 조용히 실패해서 15회 재시도 루프로 ~1.8초를 허비하고 있었습니다. 이제 양쪽 이름이 일치합니다.
-    * **수정:** 공유 메모리 세그먼트 이름이 macOS의 `shm_open` 31자 제한을 넘는 문제도 있었음. 모든 플랫폼에서 이름을 짧게 유지하도록 변경.
-    * **수정:** 네이티브 데몬이 `ai_worker.py`를 작업 디렉터리 바로 아래에서 찾았지만, 실제로는 `python_dist/` 안에만 배치되어 있어 데몬이 절대 찾을 수 없었던 경로 불일치 버그 수정.
-    * **수정:** 레거시 subprocess 벤치마크 경로가 더 이상 지원되지 않는 방식(위치 인자)으로 `ai_worker.py`를 호출해서 무한 대기하던 버그 수정 — 이제 데몬과 동일한 EXECUTE/stdin 프로토콜을 사용합니다.
-    * **수정:** `ai_worker.py`가 `torch.cuda.is_available()`만 확인해서 Apple Silicon의 Metal(MPS) 백엔드를 전혀 못 쓰고 있었음 — 이제 `mps`도 시도한 뒤 `cpu`로 폴백합니다.
-    * **수정:** 벤치마크가 `cv2.imdecode()`로 디코딩하는 YOLO 태스크에 랜덤 바이트를 "이미지 데이터"로 보내고 있어서 즉시 디코딩 실패로 끝나고, 두 경로 모두 실제 추론을 한 번도 실행하지 않고 있었음 — 이제 실제 이미지를 보냅니다.
+    * **기능:** macOS/Linux에서 시스템 `python3` 기반 venv로 완전한 네이티브 설치 경로를 구성하도록 개선.
+    * **성능:** 공유 메모리 이름 규칙을 플랫폼 간(Rust ↔ Python) 일관되게, macOS `shm_open` 제한 안에 들어오도록 튜닝.
+    * **기능:** Apple Silicon에서 CUDA/CPU와 함께 MPS(Metal)를 디바이스 옵션으로 추가.
+    * **정리:** 내부 스크립트 경로와 레거시 subprocess 벤치마크 프로토콜을 플랫폼 간 일관되게 정리.
 
 * **v1.3.1**
     * **Linux/Docker 지원:** `setupEmbeddedPython`이 OS를 감지해서 Linux에서는 Windows 전용 임베디드 배포판 대신 시스템 `python3`를 사용.

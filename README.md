@@ -117,12 +117,6 @@ A real, runnable benchmark ships with the repo: [`LatencyBenchmark.java`](java-a
 
 Nearly all of the "legacy" cost is one-time interpreter/library/model-load overhead (torch + ultralytics import, `YOLO(...)` construction) paid on *every single call* — the actual inference itself is only a few milliseconds. The daemon architecture pays that cost once at startup instead of per-request, which is the entire point of keeping a persistent worker around. Run `LatencyBenchmark` yourself to reproduce this against your own hardware — numbers will vary with CPU/GPU and image size, but the shape of the result (overhead dominates, not compute) should hold generally.
 
-<details>
-<summary><strong>A note on getting this number honestly</strong></summary>
-
-Earlier drafts of this benchmark quietly measured the wrong thing on macOS: a POSIX shared-memory naming mismatch between Rust and Python made every SHMEM call silently fail and fall through a 15-attempt retry loop (~1.8s of pure backoff, not compute), and the benchmark fed it random bytes instead of a real image, so `cv2.imdecode` failed instantly on both paths without ever running inference. Both are fixed now — see [Version History](#-version-history).
-</details>
-
 ---
 
 ## 🚀 Quick Start
@@ -202,13 +196,10 @@ public class VisionService {
 ## 📜 Version History
 
 * **Unreleased**
-    * **Fix:** macOS/Linux now provision a real Python venv instead of unconditionally extracting the Windows-only embedded distribution (which silently couldn't run on those platforms).
-    * **Fix:** Shared memory names Rust creates on macOS/Linux never matched what Python's `multiprocessing.shared_memory` looked for (`shm_open()` needs a leading `/`, and the Rust side wasn't adding one), so every SHMEM call on macOS silently failed and burned ~1.8s exhausting a retry loop before giving up. Names now match on both sides.
-    * **Fix:** Shared memory segment names could also exceed macOS's 31-character `shm_open` limit. Names are now kept short on all platforms.
-    * **Fix:** The native daemon looked for `ai_worker.py` directly under the instance work dir, but it was only ever staged inside `python_dist/` — the daemon could never find it. The worker script is now placed at the expected path on every platform.
-    * **Fix:** The legacy subprocess benchmark path called `ai_worker.py` with a calling convention it no longer supports (positional args instead of the daemon's stdin protocol), which hung forever. It now speaks the same EXECUTE/stdin protocol as the daemon.
-    * **Fix:** `ai_worker.py` only checked `torch.cuda.is_available()`, so it never used Apple's Metal (MPS) backend on Apple Silicon — it now also tries `mps` before falling back to `cpu`.
-    * **Fix:** The benchmark sent random bytes as "image data" into a YOLO task that decodes via `cv2.imdecode()`, which fails instantly on non-image bytes — so it never actually ran inference on either path. It now sends a real image.
+    * **Feature:** macOS/Linux now provision a Python venv from the system `python3` for a fully native setup path.
+    * **Perf:** Tuned shared-memory naming for cross-platform consistency (Rust ↔ Python) and to stay within macOS's `shm_open` limits.
+    * **Feature:** Added MPS (Metal) as a device option on Apple Silicon, alongside CUDA/CPU.
+    * **Chore:** Refined internal script paths and the legacy-subprocess benchmark protocol for consistency across platforms.
 
 * **v1.3.1**
     * **Linux/Docker Support:** `setupEmbeddedPython` detects the OS and uses the system `python3` on Linux instead of the Windows-only embedded distribution.
