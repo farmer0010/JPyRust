@@ -20,7 +20,7 @@
 </p>
 
 <div align="center">
-  <a href="README.md">🇺🇸 English Version</a>
+  <a href="README.md">🇺🇸 English Version</a> · <a href="docs/GUIDE_KR.md">📚 사용자 가이드</a>
 </div>
 
 ---
@@ -34,7 +34,7 @@
 ### 🌟 왜 JPyRust인가요?
 * 🚀 **Zero-Latency (지연 없음)**: 느린 HTTP/Socket 대신 시스템 RAM(공유 메모리)을 직접 사용하여 데이터 교환.
 * 🔄 **완벽한 병렬성 (True Parallelism)**: v1.3.0부터 **멀티 인스턴스** 아키텍처를 지원하여, 하나의 Java 앱이 여러 개의 독립적인 Python 프로세스를 동시에 제어할 수 있습니다.
-* 🛠️ **Zero-Config (설정 불필요)**: 격리된 **임베디드 Python 환경**을 자동으로 설치합니다. 복잡한 `pip install` 과정이 필요 없습니다.
+* 🛠️ **Zero-Config (설정 불필요)**: 첫 실행 시 Python 환경을 자동으로 구성합니다 — Windows는 완전한 임베디드 배포판, macOS/Linux는 시스템 `python3` 기반의 격리된 venv. 수동 `pip install` 필요 없습니다.
 * 🛡️ **Crash-Proof (충돌 방지)**: Rust가 Python 프로세스의 상태를 실시간 감시하며, 충돌 발생 시 즉시 워커를 자동 재시작합니다.
 
 ---
@@ -178,8 +178,8 @@ public class VisionService {
 <details>
 <summary><strong>🔧 1. UnsatisfiedLinkError / DLL을 찾을 수 없음</strong></summary>
 
-* **원인:** Java가 네이티브 라이브러리(`dll`/`so`)를 찾지 못하는 경우입니다.
-* **해결:** JPyRust는 라이브러리를 자동으로 `AppData/Local/Temp`에 추출합니다. 문제가 지속되면 `jpyrust.dll` (Windows) 또는 `libjpyrust.so` (Linux)가 라이브러리 경로에 있는지 확인하세요.
+* **원인:** Java가 네이티브 라이브러리(`dll`/`dylib`/`so`)를 찾지 못하는 경우입니다.
+* **해결:** 라이브러리는 JAR 안에 번들되어 있고 자동으로 임시 파일로 추출됩니다 — `jpyrust.dll`(Windows), `jpyrust.dylib`(macOS), `jpyrust.so`(Linux). 그래도 안 되면 사용 중인 JAR의 `src/main/resources/natives/`에 해당 플랫폼 파일이 들어있는지 확인하세요.
 </details>
 
 <details>

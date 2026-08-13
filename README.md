@@ -20,7 +20,7 @@
 </p>
 
 <div align="center">
-  <a href="README_KR.md">🇰🇷 한국어 버전 (Korean Version)</a>
+  <a href="README_KR.md">🇰🇷 한국어 버전 (Korean Version)</a> · <a href="docs/GUIDE.md">📚 User Guide</a>
 </div>
 
 ---
@@ -34,7 +34,7 @@ Unlike slow `ProcessBuilder` or high-latency HTTP APIs, JPyRust leverages **Rust
 ### 🌟 Why JPyRust?
 * 🚀 **Zero-Latency**: Uses System RAM (Shared Memory) instead of HTTP/Sockets.
 * 🔄 **True Parallelism**: v1.3.0 supports **Multi-Instance** architecture (1 Java App connects to N Python Processes).
-* 🛠️ **Zero-Config**: Auto-installs a secluded Embedded Python environment. No `pip install` hell.
+* 🛠️ **Zero-Config**: Auto-provisions its Python environment on first run — a fully embedded distribution on Windows, an isolated venv from your system `python3` on macOS/Linux. No manual `pip install`.
 * 🛡️ **Crash-Proof**: Rust monitors Python health and auto-restarts workers if they crash.
 
 ---
@@ -179,7 +179,7 @@ public class VisionService {
 <summary><strong>🔧 1. UnsatisfiedLinkError / DLL Not Found</strong></summary>
 
 * **Cause:** Java cannot find the native library.
-* **Fix:** The library is automatically extracted to `AppData/Local/Temp`. If it fails, ensure `jpyrust.dll` (Windows) or `libjpyrust.so` (Linux) is in your library path.
+* **Fix:** The library is bundled in the JAR and extracted to a temp file automatically — `jpyrust.dll` (Windows), `jpyrust.dylib` (macOS), or `jpyrust.so` (Linux). If it still fails, check that your platform's file is present under `src/main/resources/natives/` in the JAR you're using.
 </details>
 
 <details>
