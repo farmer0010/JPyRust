@@ -137,7 +137,7 @@ repositories {
 
 dependencies {
     // 최신 안정 버전
-    implementation("com.github.farmer0010:JPyRust:v1.3.0")
+    implementation("com.github.farmer0010:JPyRust:v1.3.1")
 }
 ```
 
@@ -155,9 +155,11 @@ public class VisionService {
         JPyRustBridge cam1 = new JPyRustBridge("cam1");
         JPyRustBridge cam2 = new JPyRustBridge("cam2");
 
-        // 2. 초기화 (각각 ~/.jpyrust/camX 경로에 워커 프로세스 생성)
-        cam1.initialize(); 
-        cam2.initialize(); 
+        // 2. 기본값으로 초기화 (각각 ~/.jpyrust/camX 경로에 워커 프로세스 생성)
+        cam1.initialize();
+
+        // 2-1. (v1.3.1+) 커스텀 모델 & 신뢰도 임계값으로 초기화
+        cam2.initialize("/path/to/workdir", "custom_model.pt", 0.25f);
 
         // 3. 이미지 처리 (스레드 안전)
         // 인자: (이미지데이터, 길이, 가로, 세로, 채널)
@@ -207,6 +209,11 @@ public class VisionService {
     * **수정:** 레거시 subprocess 벤치마크 경로가 더 이상 지원되지 않는 방식(위치 인자)으로 `ai_worker.py`를 호출해서 무한 대기하던 버그 수정 — 이제 데몬과 동일한 EXECUTE/stdin 프로토콜을 사용합니다.
     * **수정:** `ai_worker.py`가 `torch.cuda.is_available()`만 확인해서 Apple Silicon의 Metal(MPS) 백엔드를 전혀 못 쓰고 있었음 — 이제 `mps`도 시도한 뒤 `cpu`로 폴백합니다.
     * **수정:** 벤치마크가 `cv2.imdecode()`로 디코딩하는 YOLO 태스크에 랜덤 바이트를 "이미지 데이터"로 보내고 있어서 즉시 디코딩 실패로 끝나고, 두 경로 모두 실제 추론을 한 번도 실행하지 않고 있었음 — 이제 실제 이미지를 보냅니다.
+
+* **v1.3.1**
+    * **Linux/Docker 지원:** `setupEmbeddedPython`이 OS를 감지해서 Linux에서는 Windows 전용 임베디드 배포판 대신 시스템 `python3`를 사용.
+    * **커스텀 파라미터:** 커스텀 AI 모델 설정을 위한 `initialize(workDir, modelPath, confidence)` 오버로드 추가.
+    * **하위 호환:** 기존 `initialize(workDir)`도 기본값(`yolov8n.pt`, `0.5f`)으로 그대로 동작.
 
 * **v1.3.0**
     * **대규모 리팩토링:** 멀티 인스턴스(Multi-Instance) 아키텍처로 전환.

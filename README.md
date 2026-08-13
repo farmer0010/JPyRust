@@ -137,7 +137,7 @@ repositories {
 
 dependencies {
     // Latest stable version
-    implementation("com.github.farmer0010:JPyRust:v1.3.0")
+    implementation("com.github.farmer0010:JPyRust:v1.3.1")
 }
 ```
 
@@ -155,9 +155,11 @@ public class VisionService {
         JPyRustBridge cam1 = new JPyRustBridge("cam1");
         JPyRustBridge cam2 = new JPyRustBridge("cam2");
 
-        // 2. Initialize (Spawns workers in ~/.jpyrust/camX)
-        cam1.initialize(); 
-        cam2.initialize(); 
+        // 2. Initialize with defaults (Spawns workers in ~/.jpyrust/camX)
+        cam1.initialize();
+
+        // 2-1. (v1.3.1+) Initialize with a custom model & confidence threshold
+        cam2.initialize("/path/to/workdir", "custom_model.pt", 0.25f);
 
         // 3. Process Images (Thread-Safe)
         // arg: (imageData, length, width, height, channels)
@@ -207,6 +209,11 @@ public class VisionService {
     * **Fix:** The legacy subprocess benchmark path called `ai_worker.py` with a calling convention it no longer supports (positional args instead of the daemon's stdin protocol), which hung forever. It now speaks the same EXECUTE/stdin protocol as the daemon.
     * **Fix:** `ai_worker.py` only checked `torch.cuda.is_available()`, so it never used Apple's Metal (MPS) backend on Apple Silicon — it now also tries `mps` before falling back to `cpu`.
     * **Fix:** The benchmark sent random bytes as "image data" into a YOLO task that decodes via `cv2.imdecode()`, which fails instantly on non-image bytes — so it never actually ran inference on either path. It now sends a real image.
+
+* **v1.3.1**
+    * **Linux/Docker Support:** `setupEmbeddedPython` detects the OS and uses the system `python3` on Linux instead of the Windows-only embedded distribution.
+    * **Custom Parameters:** New `initialize(workDir, modelPath, confidence)` overload for custom AI model configuration.
+    * **Backward Compatible:** Existing `initialize(workDir)` still works with defaults (`yolov8n.pt`, `0.5f`).
 
 * **v1.3.0**
     * **Major Refactor:** Switched to Multi-Instance Architecture.

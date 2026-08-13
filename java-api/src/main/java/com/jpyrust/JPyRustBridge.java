@@ -40,11 +40,15 @@ public class JPyRustBridge {
     }
 
     public synchronized void initialize(String workDirectory) {
-        String memoryKey = "JR" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 10);
-        initialize(workDirectory, memoryKey);
+        initialize(workDirectory, "yolov8n.pt", 0.5f);
     }
 
-    public synchronized void initialize(String workDirectory, String memoryKey) {
+    public synchronized void initialize(String workDirectory, String modelPath, float confidence) {
+        String memoryKey = "JR" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 10);
+        initialize(workDirectory, modelPath, confidence, memoryKey);
+    }
+
+    public synchronized void initialize(String workDirectory, String modelPath, float confidence, String memoryKey) {
         if (initialized) {
             return;
         }
@@ -59,7 +63,7 @@ public class JPyRustBridge {
 
             setupEmbeddedPython(workPath);
 
-            initNative(workDir, workDir, "yolov8n.pt", 0.5f, memoryKey);
+            initNative(workDir, workDir, modelPath, confidence, memoryKey);
             initialized = true;
 
         } catch (Exception e) {

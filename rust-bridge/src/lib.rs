@@ -79,6 +79,15 @@ impl BridgeState {
         if std::path::Path::new(&venv_path).exists() {
             return venv_path;
         }
+
+        for cmd in ["python3", "python"] {
+            if let Ok(output) = Command::new("which").arg(cmd).output() {
+                if output.status.success() {
+                    return cmd.to_string();
+                }
+            }
+        }
+
         self.log_to_java("WARN", "[Rust] venv Python not found. Falling back to 'python3'.");
         "python3".to_string()
     }
