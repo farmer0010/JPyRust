@@ -57,9 +57,10 @@ parser.add_argument("--conf", type=float, default=0.5)
 parser.add_argument("--whisper-model", type=str, default="")
 parser.add_argument("--mem-key", type=str, default="")
 parser.add_argument("--instance-id", type=str, default="default")
+parser.add_argument("--work-dir", type=str, default="")
 args, unknown = parser.parse_known_args()
 
-WORK_DIR = os.path.expanduser(f"~/.jpyrust/{args.instance_id}")
+WORK_DIR = args.work_dir if args.work_dir else os.path.expanduser(f"~/.jpyrust/{args.instance_id}")
 if not os.path.exists(WORK_DIR):
     os.makedirs(WORK_DIR)
 
