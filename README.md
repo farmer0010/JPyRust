@@ -165,6 +165,34 @@ public class VisionService {
 }
 ```
 
+### 3. Usage (Java) — Audio / Whisper
+
+**New:** JPyRust can also transcribe audio via [OpenAI Whisper](https://github.com/openai/whisper), reusing the same persistent-daemon architecture as YOLO.
+
+```java
+import com.jpyrust.JPyRustBridge;
+
+public class SpeechService {
+
+    public void startTranscription() {
+        JPyRustBridge stt = new JPyRustBridge("stt");
+
+        // Initialize with a Whisper model name (e.g. "tiny", "base", "small") or a local .pt checkpoint path.
+        // The trailing whisperModelPath argument is the only difference from the image-only overload.
+        stt.initialize("/path/to/workdir", "yolov8n.pt", 0.5f, "session-key", "tiny");
+
+        // arg: (audioData WAV bytes, length, sampleRate)
+        byte[] result = stt.processAudio(audioBuffer, audioLength, 16000);
+
+        // {"recognized_text": "...", "confidence": 0.87}
+        System.out.println("Transcription: " + new String(result));
+    }
+}
+```
+
+> Audio input is expected as a WAV container (16kHz, mono, 16-bit PCM). `confidence` is an approximation derived from Whisper's per-segment `avg_logprob`, not a calibrated probability.
+
+
 ---
 
 ## 🛠️ Configuration & Troubleshooting
@@ -196,6 +224,10 @@ public class VisionService {
 ## 📜 Version History
 
 * **Unreleased**
+    * **Feature:** Audio transcription via OpenAI Whisper — new `processAudio(data, length, sampleRate)` on the Java side and a `WHISPER` task handler in `ai_worker.py`, reusing the existing generic `executeTask` JNI call (no new native entry point). Routes through the file-based IPC fallback, which already supports variable-length payloads.
+    * **Feature:** `initialize(workDir, modelPath, confidence, memoryKey, whisperModelPath)` overload to configure the Whisper model (name or local checkpoint path) alongside the existing YOLO model/confidence.
+    * **Fix:** `modelPath`/`confidence` passed to `initialize(...)` were previously read in Rust but never actually forwarded to the Python daemon process — Python silently kept using its own argparse defaults regardless of what was passed. The daemon spawn now passes `--model`/`--conf`/`--whisper-model` through for real.
+    * **Note:** `openai-whisper` ships no PyPI wheel (sdist only), so it's excluded from the Windows embedded offline distribution (`downloadWheels`/`stagePython`) — Windows users get YOLO/image features fully offline, Whisper requires network on first install. macOS/Linux (venv bootstrap) installs it via `--no-build-isolation` with a pinned older `setuptools` (its legacy `setup.py` needs `pkg_resources`).
     * **Feature:** macOS/Linux now provision a Python venv from the system `python3` for a fully native setup path.
     * **Perf:** Tuned shared-memory naming for cross-platform consistency (Rust ↔ Python) and to stay within macOS's `shm_open` limits.
     * **Feature:** Added MPS (Metal) as a device option on Apple Silicon, alongside CUDA/CPU.

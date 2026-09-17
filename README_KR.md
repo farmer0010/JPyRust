@@ -165,6 +165,33 @@ public class VisionService {
 }
 ```
 
+### 3. 사용법 (Java) — 오디오 / Whisper
+
+**신규:** JPyRust는 [OpenAI Whisper](https://github.com/openai/whisper)를 통한 오디오 전사도 지원합니다 — YOLO와 동일한 상시 대기 데몬 아키텍처를 그대로 재사용합니다.
+
+```java
+import com.jpyrust.JPyRustBridge;
+
+public class SpeechService {
+
+    public void startTranscription() {
+        JPyRustBridge stt = new JPyRustBridge("stt");
+
+        // Whisper 모델 이름("tiny", "base", "small" 등) 또는 로컬 .pt 체크포인트 경로로 초기화.
+        // 마지막 whisperModelPath 인자만 이미지 전용 오버로드와 다르다.
+        stt.initialize("/path/to/workdir", "yolov8n.pt", 0.5f, "session-key", "tiny");
+
+        // 인자: (오디오데이터 WAV bytes, 길이, sampleRate)
+        byte[] result = stt.processAudio(audioBuffer, audioLength, 16000);
+
+        // {"recognized_text": "...", "confidence": 0.87}
+        System.out.println("전사 결과: " + new String(result));
+    }
+}
+```
+
+> 오디오 입력은 WAV 컨테이너(16kHz, mono, 16-bit PCM)를 가정합니다. `confidence`는 보정된 확률이 아니라 Whisper 세그먼트별 `avg_logprob`에서 유도한 근사치입니다.
+
 ---
 
 ## 🛠️ 설정 및 문제 해결 (Troubleshooting)
@@ -196,6 +223,10 @@ public class VisionService {
 ## 📜 버전 히스토리
 
 * **Unreleased**
+    * **기능:** OpenAI Whisper 기반 오디오 전사 지원 — Java 쪽에 `processAudio(data, length, sampleRate)` 신규 추가, `ai_worker.py`에 `WHISPER` 태스크 핸들러 추가. 기존 범용 `executeTask` JNI 호출을 그대로 재사용(새 native 진입점 없음). 이미 가변 길이 payload를 지원하는 파일 기반 IPC 폴백 경로를 그대로 탄다.
+    * **기능:** `initialize(workDir, modelPath, confidence, memoryKey, whisperModelPath)` 오버로드 추가 — 기존 YOLO 모델/신뢰도와 함께 Whisper 모델(이름 또는 로컬 체크포인트 경로)을 설정 가능.
+    * **버그 수정:** `initialize(...)`에 넘긴 `modelPath`/`confidence`가 Rust에서는 받아놓고도 Python 데몬 프로세스에 실제로 전달되지 않던 문제 — Python은 무엇을 넘기든 항상 자체 argparse 기본값을 썼다. 이제 데몬 기동 시 `--model`/`--conf`/`--whisper-model`을 실제로 전달한다.
+    * **참고:** `openai-whisper`는 PyPI에 wheel을 배포하지 않아(sdist만 존재) Windows 임베디드 오프라인 배포판(`downloadWheels`/`stagePython`)에서는 제외했다 — Windows 사용자는 YOLO/이미지 기능은 완전 오프라인으로 쓸 수 있지만 Whisper는 최초 설치 시 네트워크가 필요하다. macOS/Linux(venv 부트스트랩)는 `--no-build-isolation`과 구버전 `setuptools` 고정으로 설치한다(레거시 `setup.py`가 `pkg_resources`를 요구하기 때문).
     * **기능:** macOS/Linux에서 시스템 `python3` 기반 venv로 완전한 네이티브 설치 경로를 구성하도록 개선.
     * **성능:** 공유 메모리 이름 규칙을 플랫폼 간(Rust ↔ Python) 일관되게, macOS `shm_open` 제한 안에 들어오도록 튜닝.
     * **기능:** Apple Silicon에서 CUDA/CPU와 함께 MPS(Metal)를 디바이스 옵션으로 추가.
