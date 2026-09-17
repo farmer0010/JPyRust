@@ -47,6 +47,33 @@ val requirementsFile = file("../requirements.txt")
 val pythonCoreDir = file("../python-core")
 val localResourcesDir = file("src/main/resources/python_dist")
 
+// openai-whisper publishes no wheel at all on PyPI (sdist-only), so it can never satisfy
+// `pip download --only-binary=:all: --platform win_amd64` below — and it can't be
+// cross-compiled for Windows from this build machine either. Its own deps (tiktoken, numba)
+// are excluded alongside it since they're pointless without it. The Windows embedded
+// distribution simply ships without Whisper support; macOS/Linux (venv bootstrap) still gets
+// it via the full requirements.txt (see setupSystemVenvPython in JPyRustBridge.java).
+val windowsBundleExcludedPackages = setOf("openai-whisper", "tiktoken", "numba")
+val windowsRequirementsFile = layout.buildDirectory.file("python_staging/requirements-windows.txt")
+
+val filterWindowsRequirements = tasks.register("filterWindowsRequirements") {
+    group = "python"
+    description = "Filters requirements.txt down to packages that ship win_amd64 wheels"
+
+    inputs.file(requirementsFile)
+    outputs.file(windowsRequirementsFile)
+
+    doLast {
+        val outFile = windowsRequirementsFile.get().asFile
+        outFile.parentFile.mkdirs()
+        val filtered = requirementsFile.readLines().filterNot { line ->
+            val pkgName = line.trim().substringBefore("==").trim()
+            pkgName in windowsBundleExcludedPackages
+        }
+        outFile.writeText(filtered.joinToString("\n") + "\n")
+    }
+}
+
 // 1. Download Embedded Python (Windows x64)
 val downloadPython = tasks.register("downloadEmbeddedPython") {
     group = "python"
@@ -78,23 +105,24 @@ val downloadPython = tasks.register("downloadEmbeddedPython") {
 val downloadWheels = tasks.register<Exec>("downloadWheels") {
     group = "python"
     description = "Downloads wheel files for offline installation"
-    
-    inputs.file(requirementsFile)
+    dependsOn(filterWindowsRequirements)
+
+    inputs.file(windowsRequirementsFile)
     outputs.dir(wheelsDir)
-    
+
     doFirst {
         val wDir = wheelsDir.get().asFile
         if (!wDir.exists()) wDir.mkdirs()
     }
 
     val pipCmd = if (System.getProperty("os.name").lowercase().contains("win")) "pip" else "pip3"
-    
-    // We download to a temporary location first or directly to staging? 
+
+    // We download to a temporary location first or directly to staging?
     // Let's download directly to staging/wheels
     commandLine(
         pipCmd, "download",
         "pip", "setuptools", "wheel", // Explicitly download bootstrap tools
-        "-r", requirementsFile.absolutePath,
+        "-r", windowsRequirementsFile.get().asFile.absolutePath,
         "--dest", wheelsDir.get().asFile.absolutePath,
         "--platform", "win_amd64",
         "--python-version", "311",
@@ -124,11 +152,13 @@ val stagePython = tasks.register<Copy>("stagePython") {
         include("yolov8n.pt") // Optional: if we want to bundle model
     }
     
-    from(requirementsFile.parentFile) {
-        include("requirements.txt")
-        include("constraints.txt") // if exists
+    // The bundled requirements.txt here must match what downloadWheels actually fetched
+    // (windows-installable subset) — the offline `--no-index` pip install on Windows would
+    // otherwise fail trying to resolve packages (like openai-whisper) that have no wheel.
+    from(windowsRequirementsFile) {
+        rename { "requirements.txt" }
     }
-    
+
     into(pythonDistDir)
     
     // Post-processing: Enable 'import site' in python311._pth

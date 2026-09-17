@@ -32,6 +32,7 @@ struct BridgeState {
     bridge_obj: jni::objects::GlobalRef,
     model_path: String,
     confidence: f32,
+    whisper_model_path: String,
 }
 
 impl BridgeState {
@@ -106,6 +107,9 @@ impl BridgeState {
         // 저장조차 되지 않아 여기서 Python에 전달되지 않았다(항상 argparse 기본값만 사용됨).
         child_cmd.arg("--model").arg(&self.model_path);
         child_cmd.arg("--conf").arg(self.confidence.to_string());
+        if !self.whisper_model_path.is_empty() {
+            child_cmd.arg("--whisper-model").arg(&self.whisper_model_path);
+        }
         child_cmd.env("PYTHONIOENCODING", "utf-8");
         child_cmd.env("PYTHONPATH", &self.work_dir);
 
@@ -208,10 +212,12 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_initNative<'local>(
     model_path: JString<'local>,
     confidence: jni::sys::jfloat,
     memory_key: JString<'local>,
+    whisper_model: JString<'local>,
 ) {
     let work_dir_str: String = env.get_string(&work_dir).unwrap().into();
     let model_path_str: String = env.get_string(&model_path).unwrap().into();
     let memory_key_str: String = env.get_string(&memory_key).unwrap().into();
+    let whisper_model_str: String = env.get_string(&whisper_model).unwrap().into();
     let instance_id_obj = env.get_field(&obj, "instanceId", "Ljava/lang/String;").unwrap().l().unwrap();
     let instance_id: JString = instance_id_obj.into();
     let instance_id_str: String = env.get_string(&instance_id).unwrap().into();
@@ -228,6 +234,7 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_initNative<'local>(
         bridge_obj: global_obj,
         model_path: model_path_str,
         confidence,
+        whisper_model_path: whisper_model_str,
     });
 
     let state_ptr = Box::into_raw(state) as jlong;

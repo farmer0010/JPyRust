@@ -49,6 +49,11 @@ public class JPyRustBridge {
     }
 
     public synchronized void initialize(String workDirectory, String modelPath, float confidence, String memoryKey) {
+        initialize(workDirectory, modelPath, confidence, memoryKey, "");
+    }
+
+    public synchronized void initialize(String workDirectory, String modelPath, float confidence, String memoryKey,
+            String whisperModelPath) {
         if (initialized) {
             return;
         }
@@ -63,7 +68,7 @@ public class JPyRustBridge {
 
             setupEmbeddedPython(workPath);
 
-            initNative(workDir, workDir, modelPath, confidence, memoryKey);
+            initNative(workDir, workDir, modelPath, confidence, memoryKey, whisperModelPath);
             initialized = true;
 
         } catch (Exception e) {
@@ -159,8 +164,26 @@ public class JPyRustBridge {
                 throw new RuntimeException("Failed to create Python venv using: " + systemPython);
             }
 
+            // openai-whisper ships no wheel on PyPI (sdist only), and its legacy setup.py
+            // imports pkg_resources at build time. Pip's default isolated build overlay only
+            // installs the latest setuptools/wheel, which no longer guarantees pkg_resources
+            // there — so we pre-install an older setuptools into the venv itself and build
+            // against that with --no-build-isolation. This only affects packages that need a
+            // build step (i.e. openai-whisper); everything else in requirements.txt ships
+            // wheels and installs unaffected by either flag.
+            ProcessBuilder setuptoolsPb = new ProcessBuilder(
+                    venvPython.toString(), "-m", "pip", "install", "setuptools<70", "wheel");
+            setuptoolsPb.directory(targetDir.toFile());
+            setuptoolsPb.redirectErrorStream(true);
+            Process setuptoolsProc = setuptoolsPb.start();
+            drainQuietly(setuptoolsProc);
+            if (setuptoolsProc.waitFor() != 0) {
+                throw new RuntimeException("Failed to pre-install setuptools/wheel in " + venvDir);
+            }
+
             ProcessBuilder pipPb = new ProcessBuilder(
-                    venvPython.toString(), "-m", "pip", "install", "-r", requirements.toString());
+                    venvPython.toString(), "-m", "pip", "install", "--no-build-isolation",
+                    "-r", requirements.toString());
             pipPb.directory(targetDir.toFile());
             pipPb.redirectErrorStream(true);
             Process pipProc = pipPb.start();
@@ -204,7 +227,7 @@ public class JPyRustBridge {
     }
 
     private native void initNative(String workDir, String sourceScriptDir, String modelPath, float confidence,
-            String memoryKey);
+            String memoryKey, String whisperModelPath);
 
     private native void closeNative();
 
@@ -220,6 +243,12 @@ public class JPyRustBridge {
     public byte[] processImage(ByteBuffer data, int length, int width, int height, int channels, String requestId) {
         String metadata = width + " " + height + " " + channels;
         return executeTask(this.workDir, "YOLO", requestId, metadata, data, length);
+    }
+
+    public byte[] processAudio(ByteBuffer data, int length, int sampleRate) {
+        String requestId = java.util.UUID.randomUUID().toString();
+        String metadata = String.valueOf(sampleRate);
+        return executeTask(this.workDir, "WHISPER", requestId, metadata, data, length);
     }
 
     public byte[] processEdgeDetection(byte[] imageData, int width, int height, int channels) {
