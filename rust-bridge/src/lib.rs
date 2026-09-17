@@ -110,6 +110,7 @@ impl BridgeState {
         if !self.whisper_model_path.is_empty() {
             child_cmd.arg("--whisper-model").arg(&self.whisper_model_path);
         }
+        child_cmd.arg("--work-dir").arg(&self.work_dir);
         child_cmd.env("PYTHONIOENCODING", "utf-8");
         child_cmd.env("PYTHONPATH", &self.work_dir);
 
