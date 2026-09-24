@@ -134,6 +134,7 @@ test_*.log
 *.log
 *.txt
 !requirements.txt
+!baseline/*.txt
 debug_*.log
 error_*.log
 *_debug.log

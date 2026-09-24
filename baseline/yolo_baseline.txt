@@ -1,0 +1,31 @@
+YOLO baseline (pre-upgrade dependency versions) — recaptured with bus.jpg fixture
+====================================================================================
+Command: yolo predict model=yolov8n.pt source=test-fixtures/bus.jpg save_txt=True save_conf=True
+Environment: Ultralytics YOLOv8.2.0, Python-3.12.14, torch-2.2.0, CPU (Apple M5)
+Input: test-fixtures/bus.jpg (810x1080 RGB JPEG) — Ultralytics' own official demo image,
+       copied from the installed `ultralytics` package itself
+       (venv/lib/python3.12/site-packages/ultralytics/assets/bus.jpg).
+       This file ships inside the `ultralytics` PyPI package as demo/test data and is the
+       same image used in Ultralytics' own quickstart docs (predict source='...assets/bus.jpg'
+       or the public mirror https://ultralytics.com/images/bus.jpg) — redistribution as an
+       internal test fixture is expected usage, not a new external dependency.
+
+Result:
+image 1/1 test-fixtures/bus.jpg: 640x480 4 persons, 1 bus, 1 stop sign, 29.4ms
+Speed: 1.9ms preprocess, 29.4ms inference, 374.6ms postprocess per image at shape (1, 3, 640, 480)
+
+Detections: 6 total, 3 distinct classes
+  class=bus(5)       conf=0.873  box(xc,yc,w,h norm)=(0.511033, 0.457462, 0.965594, 0.486632)
+  class=person(0)    conf=0.866  box(xc,yc,w,h norm)=(0.181417, 0.602433, 0.242957, 0.466806)
+  class=person(0)    conf=0.853  box(xc,yc,w,h norm)=(0.913082, 0.587603, 0.173145, 0.448935)
+  class=person(0)    conf=0.825  box(xc,yc,w,h norm)=(0.349684, 0.584877, 0.152412, 0.418276)
+  class=person(0)    conf=0.261  box(xc,yc,w,h norm)=(0.038893, 0.659244, 0.077786, 0.298998)
+  class=stop sign(11) conf=0.255 box(xc,yc,w,h norm)=(0.020133, 0.268210, 0.040123, 0.065199)
+
+Raw YOLO label file (baseline_run/yolo_pred/labels/bus.txt, format: class x_center y_center width height conf):
+5 0.511033 0.457462 0.965594 0.486632 0.873449
+0 0.181417 0.602433 0.242957 0.466806 0.865691
+0 0.913082 0.587603 0.173145 0.448935 0.852835
+0 0.349684 0.584877 0.152412 0.418276 0.825225
+0 0.0388931 0.659244 0.0777863 0.298998 0.261112
+11 0.0201331 0.26821 0.0401225 0.0651989 0.255068
