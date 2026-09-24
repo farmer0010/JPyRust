@@ -34,7 +34,7 @@
 ### 🌟 왜 JPyRust인가요?
 * 🚀 **Zero-Latency (지연 없음)**: 느린 HTTP/Socket 대신 시스템 RAM(공유 메모리)을 직접 사용하여 데이터 교환.
 * 🔄 **완벽한 병렬성 (True Parallelism)**: v1.3.0부터 **멀티 인스턴스** 아키텍처를 지원하여, 하나의 Java 앱이 여러 개의 독립적인 Python 프로세스를 동시에 제어할 수 있습니다.
-* 🛠️ **Zero-Config (설정 불필요)**: 첫 실행 시 Python 환경을 자동으로 구성합니다 — Windows는 완전한 임베디드 배포판, macOS/Linux는 시스템 `python3` 기반의 격리된 venv. 수동 `pip install` 필요 없습니다.
+* 🛠️ **Zero-Config (설정 불필요)**: 첫 실행 시 Python 환경을 자동으로 구성합니다 — Windows는 완전한 임베디드 배포판, macOS/Linux는 `uv`가 관리하는 venv. 수동 `pip install` 필요 없습니다. macOS/Linux에서는 인터프리터 자체도 첫 실행 시 네트워크로 자동 다운로드됩니다(`uv`가 이식 가능한 Python 3.11을 fetch, ~25MB) — 더 이상 시스템에 이미 설치돼 있는 것을 전제하지 않습니다.
 * 🛡️ **Crash-Proof (충돌 방지)**: Rust가 Python 프로세스의 상태를 실시간 감시하며, 충돌 발생 시 즉시 워커를 자동 재시작합니다.
 
 ---
@@ -214,8 +214,9 @@ public class SpeechService {
 <summary><strong>🐍 3. Python 의존성 문제</strong></summary>
 
 * **Windows:** JPyRust는 **포터블 임베디드 Python**을 내장하고 있으며, `~/.jpyrust/<instanceId>/python_dist`에 자동으로 설치됩니다.
-* **macOS / Linux:** 이 플랫폼용 포터블 임베디드 Python은 없어서, `PATH`에서 `python3`을 찾고(`python3.12` → `python3.11` → `python3.13` → `python3` 순으로 시도) `~/.jpyrust/<instanceId>/venv`에 전용 venv를 만들어 `requirements.txt`를 설치합니다. 인스턴스 디렉터리당 한 번만 실행되며(`.installed` 마커로 추적), 새로 설치하려면 해당 디렉터리를 지우면 됩니다.
+* **macOS / Linux:** 이 플랫폼용 포터블 임베디드 Python은 없어서, `PATH`에 [`uv`](https://docs.astral.sh/uv/getting-started/installation/)가 있어야 하며 `uv venv --python 3.11 --seed`로 `~/.jpyrust/<instanceId>/venv`에 전용 venv를 만들어 `requirements.txt`를 설치합니다. `uv`가 관리하는 Python 3.11이 아직 없으면 첫 실행 시 자동으로 다운로드합니다 — 인터프리터를 수동으로 설치할 필요가 없습니다. 인스턴스 디렉터리당 한 번만 실행되며(`.installed` 마커로 추적), 새로 설치하려면 해당 디렉터리를 지우면 됩니다. `uv` 설치: `curl -LsSf https://astral.sh/uv/install.sh | sh` 또는 macOS에서는 `brew install uv`.
 * 라이브러리가 부족하다면 `resources` 폴더의 `requirements.txt`를 확인하세요.
+* **Docker:** 배포되는 베이스 이미지엔 Python도 `uv`도 없어서, 컨테이너 안에서는 AI 추론 기능이 현재 동작하지 않습니다 — 아래 Docker 관련 안내를 참고하세요.
 </details>
 
 ---
@@ -223,6 +224,7 @@ public class SpeechService {
 ## 📜 버전 히스토리
 
 * **Unreleased**
+    * **버그 수정:** macOS/Linux venv 프로비저닝을 `PATH`에서 시스템 `python3.12`/`python3.11`/`python3.13`/`python3`를 찾는 방식에서 `uv venv --python 3.11 --seed`로 전환 — 설치돼 있는 버전에 의존하는 대신 정확한 인터프리터 버전을 고정한다. 시스템 `python3`가 3.13 이상뿐이라 `requirements.txt`에 고정된 `numpy`/`torch` 등의 wheel이 없어 설치가 실패하던 로컬 환경 문제를 해결한다.
     * **기능:** OpenAI Whisper 기반 오디오 전사 지원 — Java 쪽에 `processAudio(data, length, sampleRate)` 신규 추가, `ai_worker.py`에 `WHISPER` 태스크 핸들러 추가. 기존 범용 `executeTask` JNI 호출을 그대로 재사용(새 native 진입점 없음). 이미 가변 길이 payload를 지원하는 파일 기반 IPC 폴백 경로를 그대로 탄다.
     * **기능:** `initialize(workDir, modelPath, confidence, memoryKey, whisperModelPath)` 오버로드 추가 — 기존 YOLO 모델/신뢰도와 함께 Whisper 모델(이름 또는 로컬 체크포인트 경로)을 설정 가능.
     * **버그 수정:** `initialize(...)`에 넘긴 `modelPath`/`confidence`가 Rust에서는 받아놓고도 Python 데몬 프로세스에 실제로 전달되지 않던 문제 — Python은 무엇을 넘기든 항상 자체 argparse 기본값을 썼다. 이제 데몬 기동 시 `--model`/`--conf`/`--whisper-model`을 실제로 전달한다.

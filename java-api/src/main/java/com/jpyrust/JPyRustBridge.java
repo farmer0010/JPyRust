@@ -154,14 +154,14 @@ public class JPyRustBridge {
         NativeLoader.extractFile("/requirements.txt", requirements);
 
         if (!Files.exists(markerFile)) {
-            String systemPython = findSystemPython3();
+            String uv = findUv();
 
-            ProcessBuilder venvPb = new ProcessBuilder(systemPython, "-m", "venv", venvDir.toString());
+            ProcessBuilder venvPb = new ProcessBuilder(uv, "venv", "--python", "3.11", "--seed", venvDir.toString());
             venvPb.redirectErrorStream(true);
             Process venvProc = venvPb.start();
             drainQuietly(venvProc);
             if (venvProc.waitFor() != 0) {
-                throw new RuntimeException("Failed to create Python venv using: " + systemPython);
+                throw new RuntimeException("Failed to create Python 3.11 venv via uv at: " + venvDir);
             }
 
             // openai-whisper ships no wheel on PyPI (sdist only), and its legacy setup.py
@@ -199,18 +199,18 @@ public class JPyRustBridge {
         this.pythonExe = venvPython;
     }
 
-    private String findSystemPython3() {
-        for (String candidate : new String[] { "python3.12", "python3.11", "python3.13", "python3" }) {
-            try {
-                Process p = new ProcessBuilder(candidate, "--version").redirectErrorStream(true).start();
-                drainQuietly(p);
-                if (p.waitFor() == 0) {
-                    return candidate;
-                }
-            } catch (Exception ignored) {
+    private String findUv() {
+        try {
+            Process p = new ProcessBuilder("uv", "--version").redirectErrorStream(true).start();
+            drainQuietly(p);
+            if (p.waitFor() == 0) {
+                return "uv";
             }
+        } catch (Exception ignored) {
         }
-        throw new RuntimeException("No usable python3 interpreter found on PATH");
+        throw new RuntimeException(
+                "uv가 설치되어 있지 않습니다. https://docs.astral.sh/uv/getting-started/installation/ 를 참고해 설치 후 다시 시도하세요.\n"
+                        + "  macOS/Linux: curl -LsSf https://astral.sh/uv/install.sh | sh");
     }
 
     private void drainQuietly(Process process) throws Exception {
