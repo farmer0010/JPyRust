@@ -25,7 +25,8 @@ Java 애플리케이션에서 JPyRust를 설치하고, 초기화하고, 호출�
 | Java | 17 이상 |
 | 플랫폼 | Windows, macOS, Linux (x86_64) |
 | Windows | 별도 준비 불필요 — 임베디드 Python이 번들되어 있고 자동으로 설치됩니다. |
-| macOS / Linux | `PATH`에 `python3` 인터프리터가 있어야 합니다(JPyRust는 `python3.12` → `python3.11` → `python3.13` → `python3` 순으로 찾습니다). 찾은 인터프리터로 격리된 전용 venv를 새로 만들어 쓰기 때문에 시스템 Python의 패키지는 건드리지 않습니다. |
+| macOS / Linux | `PATH`에 [`uv`](https://docs.astral.sh/uv/getting-started/installation/)가 있어야 합니다(`curl -LsSf https://astral.sh/uv/install.sh \| sh` 또는 macOS는 `brew install uv`). JPyRust가 `uv venv --python 3.11 --seed`로 격리된 venv를 만드는데, `uv`가 관리하는 Python 3.11이 아직 없으면 첫 실행 시 자동으로 받아오므로 인터프리터를 미리 설치해 둘 필요가 없습니다. |
+| Docker | AI 추론 기능은 현재 지원되지 않습니다 — 배포되는 베이스 이미지엔 Python도 `uv`도 없습니다. |
 
 ## 설치
 
@@ -152,7 +153,8 @@ cam2.initialize();
 ## 플랫폼별 참고사항
 
 - **Windows**: 포터블 임베디드 Python 배포판이 JAR 안에 번들되어 있고, 첫 `initialize()` 호출 때 풀립니다. 완전히 독립적으로 동작합니다.
-- **macOS / Linux**: 이 플랫폼용 포터블 임베디드 Python은 없어서, 시스템 `python3`을 찾아 그걸로 전용 venv(`~/.jpyrust/<instanceId>/venv`)를 만듭니다. 즉 `python3`이 미리 설치되어 있고 `PATH`에서 찾아져야 합니다.
+- **macOS / Linux**: 이 플랫폼용 포터블 임베디드 Python은 없어서, `PATH`에 `uv`가 있어야 하고 `uv venv --python 3.11 --seed`로 전용 venv(`~/.jpyrust/<instanceId>/venv`)를 만듭니다. `uv`가 필요하면 첫 실행 시 포터블 Python 3.11을 자동으로 받아오므로, 미리 설치해야 하는 건 인터프리터가 아니라 `uv` 자체입니다.
+- **Docker**: 배포되는 컨테이너 이미지 안에서는 AI 추론 기능이 현재 동작하지 않습니다 — Python도 `uv`도 없습니다.
 - 세 플랫폼 모두 대응하는 네이티브 라이브러리(`jpyrust.dll` / `jpyrust.dylib` / `jpyrust.so`)가 JAR 안에 들어있습니다 — 배포된 아티팩트를 쓸 때는 직접 빌드할 필요가 없습니다.
 
 ## 벤치마크 직접 돌려보기

@@ -34,7 +34,7 @@ Unlike slow `ProcessBuilder` or high-latency HTTP APIs, JPyRust leverages **Rust
 ### 🌟 Why JPyRust?
 * 🚀 **Zero-Latency**: Uses System RAM (Shared Memory) instead of HTTP/Sockets.
 * 🔄 **True Parallelism**: v1.3.0 supports **Multi-Instance** architecture (1 Java App connects to N Python Processes).
-* 🛠️ **Zero-Config**: Auto-provisions its Python environment on first run — a fully embedded distribution on Windows, an isolated venv from your system `python3` on macOS/Linux. No manual `pip install`.
+* 🛠️ **Zero-Config**: Auto-provisions its Python environment on first run — a fully embedded distribution on Windows, a `uv`-managed venv on macOS/Linux. No manual `pip install`. On macOS/Linux the interpreter itself is fetched over the network on first run too (`uv` downloads a portable Python 3.11, ~25MB) — it's no longer assumed to already be on your machine.
 * 🛡️ **Crash-Proof**: Rust monitors Python health and auto-restarts workers if they crash.
 
 ---
@@ -215,8 +215,9 @@ public class SpeechService {
 <summary><strong>🐍 3. Python Dependency Issues</strong></summary>
 
 * **Windows:** JPyRust includes a **portable embedded Python**. It bootstraps itself in `~/.jpyrust/<instanceId>/python_dist`.
-* **macOS / Linux:** there is no portable embedded Python for these platforms, so JPyRust instead looks for a `python3` on your `PATH` (tries `python3.12`, `python3.11`, `python3.13`, then `python3`) and provisions a private virtualenv at `~/.jpyrust/<instanceId>/venv`, installing `requirements.txt` into it. This runs once per instance directory (tracked by a `.installed` marker) — delete that directory to force a clean reinstall.
+* **macOS / Linux:** there is no portable embedded Python for these platforms, so JPyRust requires [`uv`](https://docs.astral.sh/uv/getting-started/installation/) on your `PATH` and runs `uv venv --python 3.11 --seed` to provision a private virtualenv at `~/.jpyrust/<instanceId>/venv`, then installs `requirements.txt` into it. `uv` fetches a portable Python 3.11 on first run if one isn't already managed by `uv` — no manual interpreter install needed. This runs once per instance directory (tracked by a `.installed` marker) — delete that directory to force a clean reinstall. Install `uv` via `curl -LsSf https://astral.sh/uv/install.sh | sh` or a package manager, e.g. `brew install uv` on macOS.
 * If libraries are missing, check `requirements.txt` in the resource folder.
+* **Docker:** the published base image ships no Python and no `uv`, so AI inference features do not currently work inside the container — see the Docker note below.
 </details>
 
 ---
@@ -224,6 +225,7 @@ public class SpeechService {
 ## 📜 Version History
 
 * **Unreleased**
+    * **Fix:** macOS/Linux venv provisioning switched from searching `PATH` for a system `python3.12`/`python3.11`/`python3.13`/`python3` to `uv venv --python 3.11 --seed`, which pins an exact interpreter version instead of depending on whatever happens to be installed. This fixes local environments where the only system `python3` was 3.13+ and `requirements.txt`'s pinned `numpy`/`torch`/etc. had no matching wheels.
     * **Feature:** Audio transcription via OpenAI Whisper — new `processAudio(data, length, sampleRate)` on the Java side and a `WHISPER` task handler in `ai_worker.py`, reusing the existing generic `executeTask` JNI call (no new native entry point). Routes through the file-based IPC fallback, which already supports variable-length payloads.
     * **Feature:** `initialize(workDir, modelPath, confidence, memoryKey, whisperModelPath)` overload to configure the Whisper model (name or local checkpoint path) alongside the existing YOLO model/confidence.
     * **Fix:** `modelPath`/`confidence` passed to `initialize(...)` were previously read in Rust but never actually forwarded to the Python daemon process — Python silently kept using its own argparse defaults regardless of what was passed. The daemon spawn now passes `--model`/`--conf`/`--whisper-model` through for real.
