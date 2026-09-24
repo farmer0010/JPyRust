@@ -33,3 +33,9 @@ yolo predict model=yolov8n.pt source=test-fixtures/bus.jpg save_txt=True save_co
 Whisper: run `handle_whisper_task`'s logic (see `python-core/ai_worker.py`) against
 `test-fixtures/baseline.wav` with no `language` argument (auto-detect, matches production) and
 compare the transcribed text/confidence against `baseline/whisper_baseline.json`.
+
+⚠️ 이 파일을 재생성/검증하는 스크립트를 새로 짤 때는 반드시 기존 `_meta` 객체(`audio_source`,
+`generated_with`, `duration_sec`, `whisper_model`, `device`, `language_mode`, `environment`)를
+보존해라. text/confidence만 다시 계산해서 파일 전체를 덮어쓰면 `_meta`가 조용히 사라진다 — 실제로
+한 번 발생했던 사고다(PR #4 커밋 이력 참고). 재생성 시에는 기존 JSON을 읽어서 text/confidence
+필드만 갱신하고 `_meta`는 그대로 유지하는 방식으로 작성할 것.
