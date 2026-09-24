@@ -1,4 +1,13 @@
 {
   "text": "The quick brown fox jumps over the lazy dog.",
-  "confidence": 0.7742363282287998
+  "confidence": 0.7742363282287998,
+  "_meta": {
+    "audio_source": "test-fixtures/baseline.wav",
+    "generated_with": "say -v Samantha \"the quick brown fox jumps over the lazy dog\" | afconvert -f WAVE -d LEI16@16000 -c 1",
+    "duration_sec": 2.496625,
+    "whisper_model": "base",
+    "device": "cpu",
+    "language_mode": "auto-detect (no language argument passed, matches production handle_whisper_task)",
+    "environment": "openai-whisper==20231117, torch==2.2.0, Python-3.11.15 (uv-provisioned venv)"
+  }
 }
