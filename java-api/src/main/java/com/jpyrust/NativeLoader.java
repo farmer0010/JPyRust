@@ -11,6 +11,8 @@ import java.util.Locale;
 
 public class NativeLoader {
 
+    private static final System.Logger LOGGER = System.getLogger("com.jpyrust");
+
     public static void load(String libName) {
         try {
             String os = System.getProperty("os.name").toLowerCase(Locale.ROOT);
@@ -41,11 +43,11 @@ public class NativeLoader {
             String foundPath = null;
 
             for (String path : resourcePaths) {
-                System.err.println("[NativeLoader] Checking path: " + path);
+                LOGGER.log(System.Logger.Level.DEBUG, "Checking native path: " + path);
                 is = NativeLoader.class.getResourceAsStream(path);
                 if (is != null) {
                     foundPath = path;
-                    System.err.println("[NativeLoader] Found with class loader at: " + path);
+                    LOGGER.log(System.Logger.Level.DEBUG, "Found native with class loader at: " + path);
                     break;
                 }
             }
@@ -55,11 +57,11 @@ public class NativeLoader {
                 if (contextCL != null) {
                     for (String path : resourcePaths) {
                         String adjustedPath = path.startsWith("/") ? path.substring(1) : path;
-                        System.err.println("[NativeLoader] Checking context CL path: " + adjustedPath);
+                        LOGGER.log(System.Logger.Level.DEBUG, "Checking context class loader path: " + adjustedPath);
                         is = contextCL.getResourceAsStream(adjustedPath);
                         if (is != null) {
                             foundPath = adjustedPath;
-                            System.err.println("[NativeLoader] Found with context classloader at: " + adjustedPath);
+                            LOGGER.log(System.Logger.Level.DEBUG, "Found native with context class loader at: " + adjustedPath);
                             break;
                         }
                     }
@@ -69,7 +71,6 @@ public class NativeLoader {
             if (is == null) {
                 String msg = "Native library not found in classpath: " + filename + " (tried: "
                         + String.join(", ", resourcePaths) + ")";
-                System.err.println("[NativeLoader] " + msg);
                 throw new FileNotFoundException(msg);
             }
 
@@ -82,12 +83,10 @@ public class NativeLoader {
                 is.close();
             }
 
-            System.err.println("[NativeLoader] Loading from temp: " + tempPath.toAbsolutePath());
             System.load(tempPath.toAbsolutePath().toString());
-            System.err.println("[NativeLoader] Successfully loaded: " + libName);
+            LOGGER.log(System.Logger.Level.DEBUG, "Loaded native " + libName + " from " + tempPath.toAbsolutePath());
 
         } catch (Throwable e) {
-            e.printStackTrace();
             throw new RuntimeException("Failed to load native library: " + libName, e);
         }
     }

@@ -140,8 +140,16 @@ jobs:
         distribution: 'temurin'
         java-version: '17'
 
+    - name: Set up Python for the custom interpreter test
+      id: py
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
     - name: Provision embedded Python on first initialize
       shell: bash
+      env:
+        JPYRUST_TEST_PYTHON: ${{ steps.py.outputs.python-path }}
       run: ./gradlew :java-api:test --tests com.jpyrust.PythonProvisioningTest --console=plain
 
     - name: Upload test report

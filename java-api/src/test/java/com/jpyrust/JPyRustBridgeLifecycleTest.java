@@ -54,7 +54,16 @@ public class JPyRustBridgeLifecycleTest {
     public void configurationMethodsReturnTheBridge() {
         JPyRustBridge bridge = new JPyRustBridge("lifecycle_test");
         assertSame(bridge, bridge.requirements(Paths.get("requirements.txt")).moduleDir(Paths.get("tasks"))
-                .extras("vision"));
+                .extras("vision").python(Paths.get("python3")));
+    }
+
+    @Test
+    public void worksWithTryWithResources() {
+        assertDoesNotThrow(() -> {
+            try (JPyRustBridge bridge = new JPyRustBridge("lifecycle_test")) {
+                assertSame(bridge, bridge.extras("ml"));
+            }
+        });
     }
 
     @Test

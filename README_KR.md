@@ -254,7 +254,9 @@ byte[] raw = bridge.call("WORD_COUNT", bytes, "any args here");  // 바이트 �
 * **Windows:** 첫 `initialize()` 때 python.org의 임베디드 Python 3.11.9와 버전이 고정된 `pip` wheel을 내려받아 라이브러리에 들어 있는 SHA-256 해시로 검증한 뒤, `~/.jpyrust/<instanceId>/python_dist`에 풀고 PyPI에서 `requirements.txt`와 켠 extra를 설치합니다. 따로 설치할 것은 없지만 첫 실행에는 python.org와 PyPI에 접속할 수 있어야 합니다(다운로드는 `https.proxyHost`, pip은 `HTTPS_PROXY`를 따름). 인스턴스 디렉터리당 한 번만 실행되며(`python_dist/.installed`로 추적), 다운로드 실패·체크섬 불일치·pip 오류가 나면 `initialize()`가 예외를 던집니다.
 * **macOS / Linux:** 이 플랫폼용 포터블 임베디드 Python은 없어서, `PATH`에 [`uv`](https://docs.astral.sh/uv/getting-started/installation/)가 있어야 하며 `uv venv --python 3.11 --seed`로 `~/.jpyrust/<instanceId>/venv`에 전용 venv를 만들어 `requirements.txt`를 설치합니다. `uv`가 관리하는 Python 3.11이 아직 없으면 첫 실행 시 자동으로 다운로드합니다 — 인터프리터를 수동으로 설치할 필요가 없습니다. 인스턴스 디렉터리당 한 번만 실행되며(`.installed` 마커로 추적), 새로 설치하려면 해당 디렉터리를 지우면 됩니다. `uv` 설치: `curl -LsSf https://astral.sh/uv/install.sh | sh` 또는 macOS에서는 `brew install uv`.
 * 내장 작업이 `requires extras(...)` 오류를 내면 `extras(...)`로 해당 extra를 켜세요.
-* **Docker:** 배포되는 베이스 이미지엔 Python도 `uv`도 없어서, 컨테이너 안에서는 AI 추론 기능이 현재 동작하지 않습니다 — 아래 Docker 관련 안내를 참고하세요.
+* **오프라인 / 사내망:** `python(Path.of("/usr/bin/python3.11"))`을 지정하면 `uv`나 python.org 다운로드 대신 이미 있는 인터프리터로 venv를 만듭니다(`python -m venv --system-site-packages`). 모든 OS에서 동작합니다. 그 인터프리터에 이미 설치된 패키지는 그대로 쓰므로, pip은 빠진 것만 내려받습니다. 사내 패키지 저장소는 표준 `PIP_INDEX_URL` / `PIP_TRUSTED_HOST` 환경 변수나 `pip.conf`로 지정하면 pip 자식 프로세스가 그대로 이어받습니다. 인터프리터는 인스턴스 디렉터리를 처음 구성할 때 정해지므로, 바꾸려면 새 디렉터리를 쓰세요.
+* **Docker:** 배포되는 베이스 이미지엔 Python도 `uv`도 없어서 그 안에서는 AI 추론 기능이 동작하지 않습니다. 직접 만드는 이미지에 Python을 설치하고 `python(...)`으로 넘기세요.
+* **로깅:** JPyRust는 `System.Logger`(로거 이름 `com.jpyrust`)로 로그를 남깁니다. 기본은 `java.util.logging`이고, SLF4J/Log4j의 `System.Logger` 브리지가 클래스패스에 있으면 그쪽으로 갑니다. pip 출력은 `DEBUG` 레벨입니다.
 </details>
 
 <details>
