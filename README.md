@@ -201,7 +201,7 @@ public class SpeechService {
 <summary><strong>🔧 1. UnsatisfiedLinkError / DLL Not Found</strong></summary>
 
 * **Cause:** Java cannot find the native library.
-* **Fix:** The library is bundled in the JAR and extracted to a temp file automatically — `jpyrust.dll` (Windows), `jpyrust.dylib` (macOS), or `jpyrust.so` (Linux). If it still fails, check that your platform's file is present under `src/main/resources/natives/` in the JAR you're using.
+* **Fix:** The library is bundled in the JAR and extracted to a temp file automatically — `jpyrust.dll` (Windows), `jpyrust.dylib` (macOS), or `jpyrust.so` (Linux). Natives live under `natives/<os>-<arch>/` in the JAR (`windows-x86_64`, `linux-x86_64`, `linux-aarch64`, `darwin-aarch64`, `darwin-x86_64`). The JitPack build only contains the three committed to the repo (`windows-x86_64`, `linux-x86_64`, `darwin-aarch64`); the JAR attached to each GitHub Release contains all five. If loading fails, the error lists the exact path that was looked up.
 </details>
 
 <details>
