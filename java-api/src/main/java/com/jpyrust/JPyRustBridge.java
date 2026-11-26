@@ -129,8 +129,7 @@ public class JPyRustBridge {
 
             Path pyExe = pythonDistDir.resolve("python.exe");
             Path pipWheel = download(PIP_WHEEL_URL, PIP_WHEEL_SHA256, downloads.resolve("pip-24.0-py3-none-any.whl"));
-            runOrFail("Failed to bootstrap pip into " + pythonDistDir, targetDir,
-                    pyExe.toString(), pipWheel.resolve("pip").toString(), "install", "--no-index", pipWheel.toString());
+            NativeLoader.extractZip(pipWheel, pythonDistDir.resolve("Lib/site-packages"));
             runOrFail("Failed to pre-install setuptools/wheel in " + pythonDistDir, targetDir,
                     pyExe.toString(), "-m", "pip", "install", "setuptools<70", "wheel");
             runOrFail("pip install failed for requirements.txt in " + pythonDistDir, targetDir,
