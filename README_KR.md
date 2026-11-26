@@ -200,7 +200,7 @@ public class SpeechService {
 <summary><strong>🔧 1. UnsatisfiedLinkError / DLL을 찾을 수 없음</strong></summary>
 
 * **원인:** Java가 네이티브 라이브러리(`dll`/`dylib`/`so`)를 찾지 못하는 경우입니다.
-* **해결:** 라이브러리는 JAR 안에 번들되어 있고 자동으로 임시 파일로 추출됩니다 — `jpyrust.dll`(Windows), `jpyrust.dylib`(macOS), `jpyrust.so`(Linux). 그래도 안 되면 사용 중인 JAR의 `src/main/resources/natives/`에 해당 플랫폼 파일이 들어있는지 확인하세요.
+* **해결:** 라이브러리는 JAR 안에 번들되어 있고 자동으로 임시 파일로 추출됩니다 — `jpyrust.dll`(Windows), `jpyrust.dylib`(macOS), `jpyrust.so`(Linux). 네이티브는 JAR 안의 `natives/<os>-<arch>/`에 있습니다(`windows-x86_64`, `linux-x86_64`, `linux-aarch64`, `darwin-aarch64`, `darwin-x86_64`). JitPack 빌드에는 레포에 커밋된 세 개(`windows-x86_64`, `linux-x86_64`, `darwin-aarch64`)만 들어 있고, GitHub Release에 첨부되는 JAR에는 다섯 개가 모두 들어 있습니다. 로드에 실패하면 오류 메시지에 찾아본 경로가 그대로 나옵니다.
 </details>
 
 <details>

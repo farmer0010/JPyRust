@@ -12,7 +12,7 @@ publishing {
         create<MavenPublication>("mavenJava") {
             groupId = "com.github.farmer0010"
             artifactId = "JPyRust"
-            version = "v1.3.1"
+            version = project.version.toString()
             from(components["java"])
         }
     }

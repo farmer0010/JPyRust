@@ -119,7 +119,7 @@ DLLs/
 *.pyd
 *.dll
 !rust-bridge/target/**/*.dll
-!java-api/src/main/resources/natives/*.dll
+!java-api/src/main/resources/natives/**/*.dll
 
 # =====================
 # Test Logs & CI Artifacts

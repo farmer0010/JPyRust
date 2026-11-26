@@ -15,116 +15,100 @@ env:
 
 jobs:
   build:
-    name: Build on ${{ matrix.os }}
+    name: Build ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - platform: linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            lib: libjpyrust.so
+            out: jpyrust.so
+            test: true
+          - platform: linux-aarch64
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            lib: libjpyrust.so
+            out: jpyrust.so
+            test: true
+          - platform: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            lib: jpyrust.dll
+            out: jpyrust.dll
+            test: true
+          - platform: darwin-aarch64
+            os: macos-latest
+            target: aarch64-apple-darwin
+            lib: libjpyrust.dylib
+            out: jpyrust.dylib
+            test: true
+          - platform: darwin-x86_64
+            os: macos-latest
+            target: x86_64-apple-darwin
+            lib: libjpyrust.dylib
+            out: jpyrust.dylib
+            test: false
 
     steps:
     - uses: actions/checkout@v4
 
-    - name: Set up Java
-      id: setup-java
-      uses: actions/setup-java@v4
-      with:
-        distribution: 'temurin'
-        java-version: '17'
-
-    - name: Set up Python
-      id: setup-python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
-
-    # 1. Common Environment Setup (Explicit Linking)
-    - name: Configure Common Environment
-      shell: bash
-      run: |
-        echo "JAVA_HOME=${{ steps.setup-java.outputs.path }}" >> $GITHUB_ENV
-        echo "PYO3_PYTHON=${{ steps.setup-python.outputs.python-path }}" >> $GITHUB_ENV
-
-    # 2. OS-Specific Handling
-    
-    # Linux: Install python3-dev
-    - name: Install Dependencies (Linux)
-      if: matrix.os == 'ubuntu-latest'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y python3-dev
-
-    # Windows: Setup MSVC
-    - name: Setup MSVC (Windows)
-      if: matrix.os == 'windows-latest'
-      uses: ilammy/msvc-dev-cmd@v1
-      with:
-        arch: x64
-
-    # Rust Setup
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }}
+        components: clippy
 
-    # 4. Dependency Isolation & Build
-    # 4. Dependency Isolation & Build
-    
-    # Windows Build (CMD ensures correct env inheritance from msvc-dev-cmd)
-    - name: Build Release (Windows)
-      if: matrix.os == 'windows-latest'
-      working-directory: ./rust-bridge
-      shell: cmd
-      run: |
-        echo === Windows Linker Debug ===
-        where link
-        
-        echo Building in %CD%
-        cargo build --release
-        cargo test
-
-    # Linux/macOS Build (Bash)
-    - name: Build Release (Unix)
-      if: matrix.os != 'windows-latest'
+    - name: Build
       working-directory: ./rust-bridge
       shell: bash
+      run: cargo build --release --target ${{ matrix.target }}
+
+    - name: Clippy
+      if: runner.os != 'Windows'
+      working-directory: ./rust-bridge
+      shell: bash
+      run: cargo clippy --all-targets --target ${{ matrix.target }} -- -D warnings
+
+    - name: Test
+      if: matrix.test
+      working-directory: ./rust-bridge
+      shell: bash
+      run: cargo test --target ${{ matrix.target }}
+
+    - name: Stage native
+      shell: bash
       run: |
-        # Re-export variables just in case shell isolation dropped them
-        if [ "${{ matrix.os }}" == "macos-latest" ]; then
-             export JAVA_HOME=$(/usr/libexec/java_home)
-        fi
-        
-        echo "Building in $(pwd)..."
-        cargo build --release
-        cargo clippy --all-targets -- -D warnings
-        cargo test
+        mkdir -p dist/${{ matrix.platform }}
+        cp rust-bridge/target/${{ matrix.target }}/release/${{ matrix.lib }} dist/${{ matrix.platform }}/${{ matrix.out }}
 
-    - name: Upload Artifact (Windows)
-      if: matrix.os == 'windows-latest'
+    - name: Upload native
       uses: actions/upload-artifact@v4
       with:
-        name: jpyrust-windows
-        path: rust-bridge/target/release/jpyrust.dll
-
-    - name: Upload Artifact (Linux)
-      if: matrix.os == 'ubuntu-latest'
-      uses: actions/upload-artifact@v4
-      with:
-        name: jpyrust-linux
-        path: rust-bridge/target/release/libjpyrust.so
-
-    - name: Upload Artifact (macOS)
-      if: matrix.os == 'macos-latest'
-      uses: actions/upload-artifact@v4
-      with:
-        name: jpyrust-macos
-        path: rust-bridge/target/release/libjpyrust.dylib
+        name: native-${{ matrix.platform }}
+        path: dist/
 
   java-test:
-    name: Java tests
-    runs-on: ubuntu-latest
+    name: Java tests (${{ matrix.os }})
+    needs: build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
     env:
       JITPACK: "true"
     steps:
     - uses: actions/checkout@v4
+
+    - name: Use natives built by this run
+      uses: actions/download-artifact@v4
+      with:
+        pattern: native-*
+        merge-multiple: true
+        path: java-api/src/main/resources/natives
 
     - name: Set up Java
       uses: actions/setup-java@v4
@@ -133,6 +117,7 @@ jobs:
         java-version: '17'
 
     - name: Test java-api and compile demo-web
+      shell: bash
       run: ./gradlew :java-api:test :demo-web:compileJava --console=plain
 
   python-test:
@@ -152,33 +137,86 @@ jobs:
     - name: Run pytest
       run: pytest python-core/tests -q
 
-  # ====================================
-  # Release Job: Create GitHub Release
-  # ====================================
+  package:
+    name: Package JAR
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      JITPACK: "true"
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Use natives built by this run
+      uses: actions/download-artifact@v4
+      with:
+        pattern: native-*
+        merge-multiple: true
+        path: java-api/src/main/resources/natives
+
+    - name: Set up Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    - name: Resolve version
+      id: version
+      shell: bash
+      run: |
+        if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+          echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        else
+          echo "value=$(grep '^version=' gradle.properties | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Build JAR
+      run: ./gradlew :java-api:jar -Pversion=${{ steps.version.outputs.value }} --console=plain
+
+    - name: Verify bundled natives
+      shell: bash
+      run: |
+        jar=java-api/build/libs/java-api-${{ steps.version.outputs.value }}.jar
+        unzip -l "$jar" | grep 'natives/'
+        for f in linux-x86_64/jpyrust.so linux-aarch64/jpyrust.so windows-x86_64/jpyrust.dll darwin-aarch64/jpyrust.dylib darwin-x86_64/jpyrust.dylib; do
+          unzip -l "$jar" | grep -q "natives/$f" || { echo "missing natives/$f"; exit 1; }
+        done
+        mkdir -p dist && cp "$jar" "dist/jpyrust-${{ steps.version.outputs.value }}.jar"
+
+    - name: Upload JAR
+      uses: actions/upload-artifact@v4
+      with:
+        name: jar
+        path: dist/
+
   release:
     name: Create Release
-    needs: [build, java-test, python-test]
+    needs: [package, java-test, python-test]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
-    
+
     steps:
-    - name: Download All Artifacts
+    - name: Download JAR and natives
       uses: actions/download-artifact@v4
       with:
         path: artifacts
 
-    - name: Display Artifacts
-      run: ls -R artifacts/
+    - name: Collect release files
+      shell: bash
+      run: |
+        mkdir -p release
+        cp artifacts/jar/*.jar release/
+        for dir in artifacts/native-*; do
+          platform=${dir#artifacts/native-}
+          for f in "$dir/$platform"/*; do
+            cp "$f" "release/${platform}-$(basename "$f")"
+          done
+        done
+        ls -l release
 
     - name: Create Release
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
-        files: |
-          artifacts/jpyrust-windows/jpyrust.dll
-          artifacts/jpyrust-linux/libjpyrust.so
-          artifacts/jpyrust-macos/libjpyrust.dylib
+        files: release/*
         generate_release_notes: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

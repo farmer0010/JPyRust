@@ -15,20 +15,25 @@ public class NativeLoader {
         try {
             String os = System.getProperty("os.name").toLowerCase(Locale.ROOT);
             String extension;
+            String osDir;
             if (os.contains("win")) {
                 extension = ".dll";
+                osDir = "windows";
             } else if (os.contains("mac")) {
                 extension = ".dylib";
+                osDir = "darwin";
             } else {
                 extension = ".so";
+                osDir = "linux";
             }
 
             String filename = libName + extension;
+            String platformDir = osDir + "-" + normalizeArch(System.getProperty("os.arch"));
 
             String[] resourcePaths = {
-                    "/natives/" + filename,
-                    "natives/" + filename,
-                    "/BOOT-INF/classes/natives/" + filename,
+                    "/natives/" + platformDir + "/" + filename,
+                    "natives/" + platformDir + "/" + filename,
+                    "/BOOT-INF/classes/natives/" + platformDir + "/" + filename,
                     filename
             };
 
@@ -85,6 +90,17 @@ public class NativeLoader {
             e.printStackTrace();
             throw new RuntimeException("Failed to load native library: " + libName, e);
         }
+    }
+
+    static String normalizeArch(String arch) {
+        String a = arch.toLowerCase(Locale.ROOT);
+        if (a.equals("amd64") || a.equals("x86_64") || a.equals("x64")) {
+            return "x86_64";
+        }
+        if (a.equals("aarch64") || a.equals("arm64")) {
+            return "aarch64";
+        }
+        return a;
     }
 
     public static Path extractZip(String resourcePath, String prefix) {
