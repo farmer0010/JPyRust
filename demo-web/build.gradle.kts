@@ -42,9 +42,4 @@ tasks.named<org.springframework.boot.gradle.tasks.bundling.BootJar>("bootJar") {
     from(project(":java-api").file("src/main/resources/natives")) {
         into("BOOT-INF/classes/natives")
     }
-    // python_dist.zip 포함
-    from(project(":java-api").layout.buildDirectory.dir("generated/resources")) {
-        include("python_dist.zip")
-        into("BOOT-INF/classes")
-    }
 }

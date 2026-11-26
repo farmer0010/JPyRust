@@ -131,43 +131,53 @@ public class NativeLoader {
     }
 
     public static Path extractZip(String resourcePath, Path targetDir) {
-        try {
-            if (!Files.exists(targetDir)) {
-                Files.createDirectories(targetDir);
+        try (InputStream is = NativeLoader.class.getResourceAsStream(resourcePath)) {
+            if (is == null) {
+                throw new FileNotFoundException("Resource not found: " + resourcePath);
             }
+            return unzip(is, targetDir);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to extract ZIP resource: " + resourcePath, e);
+        }
+    }
 
-            try (InputStream is = NativeLoader.class.getResourceAsStream(resourcePath)) {
-                if (is == null) {
-                    throw new FileNotFoundException("Resource not found: " + resourcePath);
+    public static Path extractZip(Path zipFile, Path targetDir) {
+        try (InputStream is = Files.newInputStream(zipFile)) {
+            return unzip(is, targetDir);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to extract ZIP file: " + zipFile, e);
+        }
+    }
+
+    private static Path unzip(InputStream is, Path targetDir) throws IOException {
+        if (!Files.exists(targetDir)) {
+            Files.createDirectories(targetDir);
+        }
+
+        try (ZipInputStream zis = new ZipInputStream(is)) {
+            ZipEntry entry;
+            while ((entry = zis.getNextEntry()) != null) {
+                Path newPath = targetDir.resolve(entry.getName()).normalize();
+                if (!newPath.startsWith(targetDir)) {
+                    throw new IOException("Zip entry is outside of the target dir: " + entry.getName());
                 }
-                try (ZipInputStream zis = new ZipInputStream(is)) {
-                    ZipEntry entry;
-                    while ((entry = zis.getNextEntry()) != null) {
-                        Path newPath = targetDir.resolve(entry.getName()).normalize();
-                        if (!newPath.startsWith(targetDir)) {
-                            throw new IOException("Zip entry is outside of the target dir: " + entry.getName());
-                        }
 
-                        if (entry.isDirectory()) {
-                            Files.createDirectories(newPath);
-                        } else {
-                            if (newPath.getParent() != null) {
-                                Files.createDirectories(newPath.getParent());
-                            }
-                            try (OutputStream os = Files.newOutputStream(newPath)) {
-                                byte[] buffer = new byte[1024];
-                                int len;
-                                while ((len = zis.read(buffer)) > 0) {
-                                    os.write(buffer, 0, len);
-                                }
-                            }
+                if (entry.isDirectory()) {
+                    Files.createDirectories(newPath);
+                } else {
+                    if (newPath.getParent() != null) {
+                        Files.createDirectories(newPath.getParent());
+                    }
+                    try (OutputStream os = Files.newOutputStream(newPath)) {
+                        byte[] buffer = new byte[1024];
+                        int len;
+                        while ((len = zis.read(buffer)) > 0) {
+                            os.write(buffer, 0, len);
                         }
                     }
                 }
             }
-            return targetDir;
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to extract ZIP resource: " + resourcePath, e);
         }
+        return targetDir;
     }
 }

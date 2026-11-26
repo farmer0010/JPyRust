@@ -98,8 +98,6 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
-    env:
-      JITPACK: "true"
     steps:
     - uses: actions/checkout@v4
 
@@ -119,6 +117,39 @@ jobs:
     - name: Test java-api and compile demo-web
       shell: bash
       run: ./gradlew :java-api:test :demo-web:compileJava --console=plain
+
+  windows-provision:
+    name: Windows Python provisioning
+    needs: build
+    runs-on: windows-latest
+    env:
+      JPYRUST_PROVISION_TEST: "true"
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Use natives built by this run
+      uses: actions/download-artifact@v4
+      with:
+        pattern: native-*
+        merge-multiple: true
+        path: java-api/src/main/resources/natives
+
+    - name: Set up Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    - name: Provision embedded Python on first initialize
+      shell: bash
+      run: ./gradlew :java-api:test --tests com.jpyrust.PythonProvisioningTest --console=plain
+
+    - name: Upload test report
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-provision-report
+        path: java-api/build/reports/tests/
 
   python-test:
     name: Python tests
@@ -141,8 +172,6 @@ jobs:
     name: Package JAR
     needs: build
     runs-on: ubuntu-latest
-    env:
-      JITPACK: "true"
     steps:
     - uses: actions/checkout@v4
 
@@ -190,7 +219,7 @@ jobs:
 
   release:
     name: Create Release
-    needs: [package, java-test, python-test]
+    needs: [package, java-test, windows-provision, python-test]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
