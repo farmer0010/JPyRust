@@ -1,4 +1,5 @@
 _tasks = {}
+config = {}
 
 
 def task(name=None):

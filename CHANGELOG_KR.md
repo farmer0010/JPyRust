@@ -1,6 +1,7 @@
 # 변경 이력
 
 * **Unreleased**
+    * **동작 변경:** 내장 작업을 선택형 extras로 옮겼습니다. `vision`(YOLO, 엣지 검출), `audio`(Whisper), `ml`(TextBlob 감정 분석, 회귀)입니다. 기본 설치는 이제 `numpy`뿐이라 `extras("vision")` / `extras("audio")` / `extras("ml")`을 부르지 않으면 `ultralytics`(AGPL-3.0), `torch`, Whisper를 설치하지 않습니다. extra 없이 내장 작업을 부르면 `Task YOLO requires extras("vision")` 오류가 납니다.
     * **기능:** 내 Python 코드 호출. 새 `jpyrust` 모듈의 `@task`로 Python 함수를 등록하고, `moduleDir(Path)`로 모듈 위치를, `requirements(Path)`로 의존성 목록을 지정한 뒤 `call(task, bytes, args)` / `call(task, text)`로 호출합니다. 결과는 바이트, UTF-8 문자열, JSON으로 돌아옵니다.
     * **동작 변경:** `.installed` 마커에 `requirements.txt`의 SHA-256을 기록하고, 다르면 `pip install`을 다시 실행합니다. 기존 설치는 다음 `initialize()`에서 `pip install`을 한 번 더 실행합니다(바뀐 게 없으면 금방 끝남).
     * **수정:** `numpy`/`opencv`가 없어도 Python 워커가 뜹니다. 이를 쓰는 내장 작업만 실패합니다.

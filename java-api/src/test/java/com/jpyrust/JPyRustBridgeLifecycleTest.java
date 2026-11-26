@@ -53,6 +53,13 @@ public class JPyRustBridgeLifecycleTest {
     @Test
     public void configurationMethodsReturnTheBridge() {
         JPyRustBridge bridge = new JPyRustBridge("lifecycle_test");
-        assertSame(bridge, bridge.requirements(Paths.get("requirements.txt")).moduleDir(Paths.get("tasks")));
+        assertSame(bridge, bridge.requirements(Paths.get("requirements.txt")).moduleDir(Paths.get("tasks"))
+                .extras("vision"));
+    }
+
+    @Test
+    public void unknownExtraIsRejected() {
+        JPyRustBridge bridge = new JPyRustBridge("lifecycle_test");
+        assertThrows(IllegalArgumentException.class, () -> bridge.extras("vision", "nlp"));
     }
 }

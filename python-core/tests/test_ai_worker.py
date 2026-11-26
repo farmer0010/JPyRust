@@ -100,9 +100,9 @@ def boom(data, args):
 '''
 
 
-def start_daemon(work_dir, module_dir, prelude=""):
+def start_daemon(work_dir, module_dir=None, prelude="", extras=()):
     with open(os.path.join(work_dir, "worker.json"), "w", encoding="utf-8") as f:
-        json.dump({"module_dirs": [str(module_dir)]}, f)
+        json.dump({"extras": list(extras), "module_dirs": [str(module_dir)] if module_dir else []}, f)
     script = (
         prelude
         + "import runpy, sys\n"
@@ -170,6 +170,45 @@ def test_daemon_starts_without_numpy_or_cv2(tmp_path, module_dir):
         assert proc.stdout.readline().strip() == "READY"
         assert execute(proc, work_dir, "SHOUT", "r1", b"ok").startswith("DONE ")
         assert read_output_file(work_dir, "r1") == b"OK"
+        stop(proc)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+
+FAKE_ULTRALYTICS = '''import sys, types
+fake = types.ModuleType("ultralytics")
+class YOLO:
+    names = {0: "bus"}
+    def __init__(self, path):
+        pass
+    def to(self, device):
+        pass
+fake.YOLO = YOLO
+sys.modules["ultralytics"] = fake
+'''
+
+
+def test_extra_tasks_need_their_extra(tmp_path):
+    proc = start_daemon(tmp_path)
+    try:
+        assert proc.stdout.readline().strip() == "READY"
+        assert execute(proc, tmp_path, "YOLO", "r1", b"") == 'ERROR Task YOLO requires extras("vision")'
+        assert execute(proc, tmp_path, "WHISPER", "r2", b"") == 'ERROR Task WHISPER requires extras("audio")'
+        stop(proc)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+
+def test_vision_extra_registers_edge_detect(tmp_path):
+    proc = start_daemon(tmp_path, prelude=FAKE_ULTRALYTICS, extras=["vision"])
+    try:
+        assert proc.stdout.readline().strip() == "READY"
+        pixels = bytes([0, 0, 0, 255, 255, 255] * 8)
+        assert execute(proc, tmp_path, "EDGE_DETECT", "r1", pixels, "4 4 3").startswith("DONE ")
+        assert read_output_file(tmp_path, "r1")[:2] == b"\xff\xd8"
+        assert execute(proc, tmp_path, "YOLO", "r2", b"not an image") == "ERROR ValueError: Failed to decode image"
         stop(proc)
     finally:
         if proc.poll() is None:

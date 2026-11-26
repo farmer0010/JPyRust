@@ -139,6 +139,16 @@ dependencies {
 
 **중요:** v1.3.0부터 `static` 메서드가 제거되었습니다. 반드시 `JPyRustBridge` 객체를 생성해야 합니다.
 
+내장 AI 작업은 선택해서 켜는 **extras**입니다. 기본 설치는 `numpy`뿐이고, `initialize()` 전에 `extras(...)`로 켠 extra의 Python 의존성만 함께 설치됩니다.
+
+| Extra | 작업 / Java 메서드 | 설치되는 것 | 라이선스 주의 |
+| --- | --- | --- | --- |
+| `vision` | `YOLO` (`processImage`), `EDGE_DETECT` (`processEdgeDetection`) | `ultralytics`, `torch`, `torchvision`, `opencv-python-headless` | `ultralytics`는 **AGPL-3.0** |
+| `audio` | `WHISPER` (`processAudio`) | `openai-whisper`, `torch` | |
+| `ml` | `NLP_TEXTBLOB` (`processNlp`), `REGRESSION` (`processRegression`) | `pandas`, `scikit-learn`, `textblob` | |
+
+extra를 켜지 않고 해당 작업을 부르면 `Task YOLO requires extras("vision")` 오류가 납니다.
+
 ```java
 import com.jpyrust.JPyRustBridge;
 
@@ -146,8 +156,8 @@ public class VisionService {
     
     public void startDetection() {
         // 1. 각 카메라를 위한 독립적인 인스턴스 생성
-        JPyRustBridge cam1 = new JPyRustBridge("cam1");
-        JPyRustBridge cam2 = new JPyRustBridge("cam2");
+        JPyRustBridge cam1 = new JPyRustBridge("cam1").extras("vision");
+        JPyRustBridge cam2 = new JPyRustBridge("cam2").extras("vision");
 
         // 2. 기본값으로 초기화 (각각 ~/.jpyrust/camX 경로에 워커 프로세스 생성)
         cam1.initialize();
@@ -175,7 +185,7 @@ import com.jpyrust.JPyRustBridge;
 public class SpeechService {
 
     public void startTranscription() {
-        JPyRustBridge stt = new JPyRustBridge("stt");
+        JPyRustBridge stt = new JPyRustBridge("stt").extras("audio");
 
         // Whisper 모델 이름("tiny", "base", "small" 등) 또는 로컬 .pt 체크포인트 경로로 초기화.
         // 마지막 whisperModelPath 인자만 이미지 전용 오버로드와 다르다.
@@ -194,7 +204,7 @@ public class SpeechService {
 
 ### 4. 사용법 (Java) — 내 Python 코드 호출
 
-아무 Python 함수나 작업으로 등록해 Java에서 부를 수 있습니다. Python 의존성은 직접 정합니다. 내장 YOLO/Whisper 스택은 `requirements.txt`를 따로 지정하지 않았을 때만 설치됩니다.
+아무 Python 함수나 작업으로 등록해 Java에서 부를 수 있습니다. Python 의존성은 직접 정하고, 요청하지 않으면 `numpy` 외에는 아무것도 설치하지 않습니다.
 
 ```python
 # tasks/text_tasks.py
@@ -217,7 +227,7 @@ byte[] raw = bridge.call("WORD_COUNT", bytes, "any args here");  // 바이트 �
 
 * 작업 함수는 입력 바이트와 `args` 문자열을 받습니다. `bytes`를 반환하면 그대로, `str`은 UTF-8로, 그 밖의 값은 JSON으로 보냅니다. 함수에서 난 예외는 Java에서 `RuntimeException`이 됩니다.
 * 각 `moduleDir`의 모든 `.py` 파일을 데몬 시작 시 import합니다. 작업 이름은 대소문자를 구분하지 않고, 등록한 작업은 같은 이름의 내장 작업을 대체합니다. import에 실패한 모듈은 stderr에 알리고 건너뜁니다.
-* `requirements(...)`는 내장 `requirements.txt`를 대체합니다. 설치 여부는 파일의 SHA-256으로 판단하므로, 파일을 바꾸면 다음 `initialize()`에서 `pip install`을 다시 실행합니다.
+* `requirements(...)`는 내장 코어 `requirements.txt`를 대체하고, 켠 extra의 의존성은 그 뒤에 덧붙습니다. 설치 여부는 파일의 SHA-256으로 판단하므로, 파일을 바꾸면 다음 `initialize()`에서 `pip install`을 다시 실행합니다.
 * 사용자 작업은 파일 기반 IPC 경로를 타므로 출력에 1MB 제한이 없습니다.
 
 ---
@@ -241,9 +251,9 @@ byte[] raw = bridge.call("WORD_COUNT", bytes, "any args here");  // 바이트 �
 <details>
 <summary><strong>🐍 3. Python 의존성 문제</strong></summary>
 
-* **Windows:** 첫 `initialize()` 때 python.org의 임베디드 Python 3.11.9와 버전이 고정된 `pip` wheel을 내려받아 라이브러리에 들어 있는 SHA-256 해시로 검증한 뒤, `~/.jpyrust/<instanceId>/python_dist`에 풀고 PyPI에서 `requirements.txt`(Whisper 포함)를 설치합니다. 따로 설치할 것은 없지만 첫 실행에는 python.org와 PyPI에 접속할 수 있어야 합니다(다운로드는 `https.proxyHost`, pip은 `HTTPS_PROXY`를 따름). 인스턴스 디렉터리당 한 번만 실행되며(`python_dist/.installed`로 추적), 다운로드 실패·체크섬 불일치·pip 오류가 나면 `initialize()`가 예외를 던집니다.
+* **Windows:** 첫 `initialize()` 때 python.org의 임베디드 Python 3.11.9와 버전이 고정된 `pip` wheel을 내려받아 라이브러리에 들어 있는 SHA-256 해시로 검증한 뒤, `~/.jpyrust/<instanceId>/python_dist`에 풀고 PyPI에서 `requirements.txt`와 켠 extra를 설치합니다. 따로 설치할 것은 없지만 첫 실행에는 python.org와 PyPI에 접속할 수 있어야 합니다(다운로드는 `https.proxyHost`, pip은 `HTTPS_PROXY`를 따름). 인스턴스 디렉터리당 한 번만 실행되며(`python_dist/.installed`로 추적), 다운로드 실패·체크섬 불일치·pip 오류가 나면 `initialize()`가 예외를 던집니다.
 * **macOS / Linux:** 이 플랫폼용 포터블 임베디드 Python은 없어서, `PATH`에 [`uv`](https://docs.astral.sh/uv/getting-started/installation/)가 있어야 하며 `uv venv --python 3.11 --seed`로 `~/.jpyrust/<instanceId>/venv`에 전용 venv를 만들어 `requirements.txt`를 설치합니다. `uv`가 관리하는 Python 3.11이 아직 없으면 첫 실행 시 자동으로 다운로드합니다 — 인터프리터를 수동으로 설치할 필요가 없습니다. 인스턴스 디렉터리당 한 번만 실행되며(`.installed` 마커로 추적), 새로 설치하려면 해당 디렉터리를 지우면 됩니다. `uv` 설치: `curl -LsSf https://astral.sh/uv/install.sh | sh` 또는 macOS에서는 `brew install uv`.
-* 라이브러리가 부족하다면 `resources` 폴더의 `requirements.txt`를 확인하세요.
+* 내장 작업이 `requires extras(...)` 오류를 내면 `extras(...)`로 해당 extra를 켜세요.
 * **Docker:** 배포되는 베이스 이미지엔 Python도 `uv`도 없어서, 컨테이너 안에서는 AI 추론 기능이 현재 동작하지 않습니다 — 아래 Docker 관련 안내를 참고하세요.
 </details>
 

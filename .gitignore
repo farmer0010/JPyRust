@@ -135,6 +135,7 @@ test_*.log
 *.txt
 !requirements.txt
 !baseline/*.txt
+!python-core/extras/*.txt
 debug_*.log
 error_*.log
 *_debug.log

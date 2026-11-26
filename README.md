@@ -139,6 +139,16 @@ dependencies {
 
 **Important:** As of v1.3.0, static methods are removed. You must instantiate `JPyRustBridge`.
 
+The built-in AI tasks are opt-in **extras**. The default install is only `numpy`; enable an extra with `extras(...)` before `initialize()` and its Python dependencies are installed with it.
+
+| Extra | Tasks / Java methods | Installs | License note |
+| --- | --- | --- | --- |
+| `vision` | `YOLO` (`processImage`), `EDGE_DETECT` (`processEdgeDetection`) | `ultralytics`, `torch`, `torchvision`, `opencv-python-headless` | `ultralytics` is **AGPL-3.0** |
+| `audio` | `WHISPER` (`processAudio`) | `openai-whisper`, `torch` | |
+| `ml` | `NLP_TEXTBLOB` (`processNlp`), `REGRESSION` (`processRegression`) | `pandas`, `scikit-learn`, `textblob` | |
+
+Calling a task without its extra fails with `Task YOLO requires extras("vision")`.
+
 ```java
 import com.jpyrust.JPyRustBridge;
 
@@ -146,8 +156,8 @@ public class VisionService {
     
     public void startDetection() {
         // 1. Create independent instances for each camera
-        JPyRustBridge cam1 = new JPyRustBridge("cam1");
-        JPyRustBridge cam2 = new JPyRustBridge("cam2");
+        JPyRustBridge cam1 = new JPyRustBridge("cam1").extras("vision");
+        JPyRustBridge cam2 = new JPyRustBridge("cam2").extras("vision");
 
         // 2. Initialize with defaults (Spawns workers in ~/.jpyrust/camX)
         cam1.initialize();
@@ -175,7 +185,7 @@ import com.jpyrust.JPyRustBridge;
 public class SpeechService {
 
     public void startTranscription() {
-        JPyRustBridge stt = new JPyRustBridge("stt");
+        JPyRustBridge stt = new JPyRustBridge("stt").extras("audio");
 
         // Initialize with a Whisper model name (e.g. "tiny", "base", "small") or a local .pt checkpoint path.
         // The trailing whisperModelPath argument is the only difference from the image-only overload.
@@ -194,7 +204,7 @@ public class SpeechService {
 
 ### 4. Usage (Java) — Your Own Python Code
 
-Register any Python function as a task and call it from Java. You choose the Python dependencies; the built-in YOLO/Whisper stack is only installed when you don't pass your own `requirements.txt`.
+Register any Python function as a task and call it from Java. You choose the Python dependencies, and nothing beyond `numpy` is installed unless you ask for it.
 
 ```python
 # tasks/text_tasks.py
@@ -217,7 +227,7 @@ byte[] raw = bridge.call("WORD_COUNT", bytes, "any args here");  // raw bytes in
 
 * A task receives the input bytes and the `args` string. Returning `bytes` sends them as-is, `str` is UTF-8 encoded, anything else is sent as JSON. An exception becomes a `RuntimeException` in Java.
 * Every `.py` file in each `moduleDir` is imported at daemon start. Task names are case-insensitive, and a registered task replaces a built-in one with the same name. A module that fails to import is reported on stderr and skipped.
-* `requirements(...)` replaces the bundled `requirements.txt`. The install is keyed by the file's SHA-256, so changing it re-runs `pip install` on the next `initialize()`.
+* `requirements(...)` replaces the bundled core `requirements.txt`; requirements of enabled extras are appended to it. The install is keyed by the file's SHA-256, so changing it re-runs `pip install` on the next `initialize()`.
 * Custom tasks go through the file-based IPC path, so their output has no 1 MB limit.
 
 
@@ -242,9 +252,9 @@ byte[] raw = bridge.call("WORD_COUNT", bytes, "any args here");  // raw bytes in
 <details>
 <summary><strong>🐍 3. Python Dependency Issues</strong></summary>
 
-* **Windows:** on the first `initialize()`, JPyRust downloads python.org's embeddable Python 3.11.9 and a pinned `pip` wheel, verifies both against SHA-256 hashes built into the library, unpacks Python into `~/.jpyrust/<instanceId>/python_dist`, and installs `requirements.txt` (including Whisper) from PyPI. Nothing extra needs to be installed, but the first run needs network access to python.org and PyPI (honoring `https.proxyHost` for the downloads and `HTTPS_PROXY` for pip). It runs once per instance directory (tracked by `python_dist/.installed`); a failed download, checksum mismatch or pip error makes `initialize()` throw.
+* **Windows:** on the first `initialize()`, JPyRust downloads python.org's embeddable Python 3.11.9 and a pinned `pip` wheel, verifies both against SHA-256 hashes built into the library, unpacks Python into `~/.jpyrust/<instanceId>/python_dist`, and installs `requirements.txt` plus the enabled extras from PyPI. Nothing extra needs to be installed, but the first run needs network access to python.org and PyPI (honoring `https.proxyHost` for the downloads and `HTTPS_PROXY` for pip). It runs once per instance directory (tracked by `python_dist/.installed`); a failed download, checksum mismatch or pip error makes `initialize()` throw.
 * **macOS / Linux:** there is no portable embedded Python for these platforms, so JPyRust requires [`uv`](https://docs.astral.sh/uv/getting-started/installation/) on your `PATH` and runs `uv venv --python 3.11 --seed` to provision a private virtualenv at `~/.jpyrust/<instanceId>/venv`, then installs `requirements.txt` into it. `uv` fetches a portable Python 3.11 on first run if one isn't already managed by `uv` — no manual interpreter install needed. This runs once per instance directory (tracked by a `.installed` marker) — delete that directory to force a clean reinstall. Install `uv` via `curl -LsSf https://astral.sh/uv/install.sh | sh` or a package manager, e.g. `brew install uv` on macOS.
-* If libraries are missing, check `requirements.txt` in the resource folder.
+* If a built-in task reports `requires extras(...)`, add that extra with `extras(...)`.
 * **Docker:** the published base image ships no Python and no `uv`, so AI inference features do not currently work inside the container — see the Docker note below.
 </details>
 
