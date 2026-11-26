@@ -1,6 +1,9 @@
 # Changelog
 
 * **Unreleased**
+    * **Feature:** `python(Path)` builds the venv from an existing interpreter (`python -m venv --system-site-packages`) instead of `uv` or the python.org download, on every OS — for offline, intranet and container setups.
+    * **Feature:** `JPyRustBridge` implements `AutoCloseable`, so it works with try-with-resources.
+    * **Behavior Change:** Logs go through `System.Logger` (`com.jpyrust`) instead of `System.out`/`System.err`. Native-loading and pip output are logged at `DEBUG`, so they are hidden by default.
     * **Behavior Change:** The built-in tasks moved into opt-in extras: `vision` (YOLO, edge detection), `audio` (Whisper) and `ml` (TextBlob sentiment, regression). The default install is now only `numpy`, so `ultralytics` (AGPL-3.0), `torch` and Whisper are no longer installed unless you call `extras("vision")` / `extras("audio")` / `extras("ml")`. Calling a built-in task without its extra fails with `Task YOLO requires extras("vision")`.
     * **Feature:** Call your own Python code. `@task` (from the new `jpyrust` module) registers a Python function, `moduleDir(Path)` points the daemon at your modules, `requirements(Path)` replaces the bundled dependency list, and `call(task, bytes, args)` / `call(task, text)` invoke it. Results are returned as bytes, UTF-8 text or JSON.
     * **Behavior Change:** The `.installed` marker now stores the SHA-256 of `requirements.txt`, and a mismatch re-runs `pip install`. Existing installs run `pip install` once more on the next `initialize()` (fast when nothing changed).

@@ -43,6 +43,27 @@ public class PythonProvisioningTest {
     }
 
     @Test
+    @EnabledIfEnvironmentVariable(named = "JPYRUST_TEST_PYTHON", matches = ".+")
+    public void customInterpreterBuildsTheVenv(@TempDir(cleanup = CleanupMode.NEVER) Path dir) throws Exception {
+        Path requirements = Files.writeString(dir.resolve("requirements.txt"), "");
+        Path modules = Files.createDirectories(dir.resolve("tasks"));
+        Files.writeString(modules.resolve("version_tasks.py"),
+                "import sys\nfrom jpyrust import task\n\n\n@task(\"PREFIX\")\ndef prefix(data, args):\n"
+                        + "    return sys.prefix\n");
+        Path work = dir.resolve("work");
+
+        try (JPyRustBridge bridge = new JPyRustBridge("provision_custom_python")
+                .python(Path.of(System.getenv("JPYRUST_TEST_PYTHON")))
+                .requirements(requirements)
+                .moduleDir(modules)) {
+            bridge.initialize(work.toString());
+            String prefix = bridge.call("PREFIX", "");
+            assertEquals(work.resolve("venv").toRealPath(), Path.of(prefix).toRealPath());
+        }
+        assertTrue(Files.notExists(work.resolve("python_dist")));
+    }
+
+    @Test
     public void userModuleRunsWithUserRequirements(@TempDir(cleanup = CleanupMode.NEVER) Path dir) throws Exception {
         Path requirements = Files.writeString(dir.resolve("requirements.txt"), "");
         Path modules = Files.createDirectories(dir.resolve("tasks"));

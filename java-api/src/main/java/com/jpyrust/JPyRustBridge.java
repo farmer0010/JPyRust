@@ -24,13 +24,14 @@ import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
-public class JPyRustBridge {
+public class JPyRustBridge implements AutoCloseable {
 
     private static final String EMBEDDED_PYTHON_URL = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip";
     private static final String EMBEDDED_PYTHON_SHA256 = "009d6bf7e3b2ddca3d784fa09f90fe54336d5b60f0e0f305c37f400bf83cfd3b";
     private static final String PIP_WHEEL_URL = "https://files.pythonhosted.org/packages/8a/6a/19e9fe04fca059ccf770861c7d5721ab4c2aebc539889e97c7977528a53b/pip-24.0-py3-none-any.whl";
     private static final String PIP_WHEEL_SHA256 = "ba0d021a166865d2265246961bec0152ff124de910c5cc39f1156ce3fa7c69dc";
     private static final List<String> AVAILABLE_EXTRAS = List.of("vision", "audio", "ml");
+    private static final System.Logger LOGGER = System.getLogger("com.jpyrust");
 
     static {
         try {
@@ -46,6 +47,7 @@ public class JPyRustBridge {
     private String workDir;
     private Path pythonExe;
     private Path requirementsFile;
+    private Path pythonInterpreter;
     private final List<Path> moduleDirs = new ArrayList<>();
     private final List<String> extras = new ArrayList<>();
     private final ReentrantReadWriteLock lifecycleLock = new ReentrantReadWriteLock();
@@ -67,6 +69,14 @@ public class JPyRustBridge {
             throw new IllegalStateException("moduleDir() must be called before initialize()");
         }
         moduleDirs.add(dir.toAbsolutePath().normalize());
+        return this;
+    }
+
+    public synchronized JPyRustBridge python(Path interpreter) {
+        if (initialized) {
+            throw new IllegalStateException("python() must be called before initialize()");
+        }
+        this.pythonInterpreter = interpreter;
         return this;
     }
 
@@ -153,10 +163,10 @@ public class JPyRustBridge {
         writeWorkerConfig(targetDir.resolve("worker.json"));
         String requirementsHash = sha256Hex(Files.readAllBytes(requirements));
 
-        if (isWindows) {
+        if (isWindows && pythonInterpreter == null) {
             setupWindowsEmbeddedPython(targetDir, requirementsHash);
         } else {
-            setupSystemVenvPython(targetDir, requirementsHash);
+            setupVenvPython(targetDir, requirementsHash, isWindows);
         }
     }
 
@@ -249,21 +259,19 @@ public class JPyRustBridge {
         }
     }
 
-    private void setupSystemVenvPython(Path targetDir, String requirementsHash) throws Exception {
+    private void setupVenvPython(Path targetDir, String requirementsHash, boolean isWindows) throws Exception {
         Path markerFile = targetDir.resolve(".installed");
         Path venvDir = targetDir.resolve("venv");
-        Path venvPython = venvDir.resolve("bin/python3");
+        Path venvPython = venvDir.resolve(isWindows ? "Scripts/python.exe" : "bin/python3");
         Path requirements = targetDir.resolve("requirements.txt");
 
         if (!Files.exists(markerFile)) {
-            String uv = findUv();
-
-            ProcessBuilder venvPb = new ProcessBuilder(uv, "venv", "--python", "3.11", "--seed", venvDir.toString());
-            venvPb.redirectErrorStream(true);
-            Process venvProc = venvPb.start();
-            drainQuietly(venvProc);
-            if (venvProc.waitFor() != 0) {
-                throw new RuntimeException("Failed to create Python 3.11 venv via uv at: " + venvDir);
+            if (pythonInterpreter != null) {
+                runOrFail("Failed to create venv with " + pythonInterpreter + " at: " + venvDir, targetDir,
+                        pythonInterpreter.toString(), "-m", "venv", "--system-site-packages", venvDir.toString());
+            } else {
+                runOrFail("Failed to create Python 3.11 venv via uv at: " + venvDir, targetDir,
+                        findUv(), "venv", "--python", "3.11", "--seed", venvDir.toString());
             }
 
             // openai-whisper ships no wheel on PyPI (sdist only), and its legacy setup.py
@@ -326,7 +334,13 @@ public class JPyRustBridge {
     }
 
     public void log(String level, String msg) {
-        System.out.println("[JPyRust-" + instanceId + "] [" + level + "] " + msg);
+        System.Logger.Level loggerLevel = switch (level) {
+            case "DEBUG" -> System.Logger.Level.DEBUG;
+            case "WARN" -> System.Logger.Level.WARNING;
+            case "ERROR" -> System.Logger.Level.ERROR;
+            default -> System.Logger.Level.INFO;
+        };
+        LOGGER.log(loggerLevel, "[" + instanceId + "] " + msg);
     }
 
     private native void initNative(String workDir, String sourceScriptDir, String modelPath, float confidence,
