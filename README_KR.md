@@ -219,11 +219,42 @@ public class SpeechService {
 * **Docker:** 배포되는 베이스 이미지엔 Python도 `uv`도 없어서, 컨테이너 안에서는 AI 추론 기능이 현재 동작하지 않습니다 — 아래 Docker 관련 안내를 참고하세요.
 </details>
 
+<details>
+<summary><strong>⏱️ 4. 오류 처리와 타임아웃</strong></summary>
+
+네이티브 계층의 실패는 JVM을 종료시키거나 `null`을 반환하지 않고 Java 예외로 전달됩니다.
+
+| 상황 | 결과 |
+| --- | --- |
+| `initialize()` 전이나 `close()` 후에 `processImage` / `processAudio` / `sendTask` 호출 | `IllegalStateException` |
+| Python 작업 실패 (디코딩 실패, 알 수 없는 작업, 모델 없음 등) | 워커의 `ERROR ...` 메시지를 담은 `RuntimeException` |
+| 결과가 1MB 공유 메모리 출력 버퍼보다 큼 (YOLO, EDGE_DETECT) | `RuntimeException` (`Output too large: ...`) |
+| heap `ByteBuffer`를 넘기거나 `length`가 버퍼보다 큼 | `RuntimeException` (`Input must be a direct ByteBuffer` / `Invalid input length ...`) |
+| `initialize()` 중 Python 데몬 기동 실패 | `RuntimeException` (`Failed to initialize JPyRustBridge`, 원인 `Daemon start failed: ...`) |
+
+`processEdgeDetection`은 실패 시 여전히 `null`을 반환하고, `processNlp` / `processRegression`은 여전히 `{"error": ...}` JSON 문자열을 반환합니다. 이 래퍼들은 예외를 내부에서 처리합니다.
+
+| 타임아웃 | 값 | 초과 시 |
+| --- | --- | --- |
+| 데몬 기동 (`READY` 대기, 모델 로딩 포함) | 600초 | 프로세스를 종료하고 예외 발생 |
+| 작업 1건 (`DONE` / `ERROR` 대기) | 300초 | 프로세스를 종료하고 예외 발생. 다음 호출 때 새 데몬을 띄움 (기동 타임아웃 다시 적용) |
+
+* 타임아웃은 `rust-bridge/src/lib.rs`의 상수(`READY_TIMEOUT`, `TASK_TIMEOUT`)이며 아직 설정으로 바꿀 수 없습니다.
+* 인스턴스마다 데몬이 하나이고 요청을 한 번에 하나씩 처리합니다. 작업 하나가 멈추면 같은 인스턴스의 다른 요청도 최대 300초 기다립니다. 독립적인 작업은 별도 인스턴스(`new JPyRustBridge("id")`)로 나누세요.
+* 데몬이 죽으면 다음 호출 때 자동으로 다시 띄웁니다. 그 호출은 기동 비용(모델 재로딩)을 치릅니다.
+</details>
+
 ---
 
 ## 📜 버전 히스토리
 
 * **Unreleased**
+    * **동작 변경:** `processImage`, `processAudio`, 새로 추가된 `sendTask`는 실패 시 `null` 대신 `RuntimeException`을 던집니다. `initialize()` 전이나 `close()` 후에 호출하면 `IllegalStateException`이 발생합니다. `initialize()`는 Python 데몬 기동에 실패하면 예외를 던집니다(이전에는 로그만 남기고 반쯤 초기화된 상태로 남았음). 위의 *오류 처리와 타임아웃*을 참고하세요.
+    * **수정:** Rust JNI 진입점을 `catch_unwind`로 감싸, 네이티브 panic이나 JNI 오류가 JVM을 종료시키지 않고 Java 예외로 전달됩니다. `executeTask`와 `close()`를 동기화해, 호출 도중 `close()`가 네이티브 상태를 해제하는 문제를 막았습니다.
+    * **수정:** Python 데몬 대기에 실제로 동작하는 타임아웃을 적용했습니다(기동 600초, 작업 300초). 멈추거나 죽은 데몬은 종료되고 다음 호출 때 다시 뜹니다. 기존 600초 기동 타임아웃은 blocking 읽기 때문에 한 번도 동작하지 않았습니다.
+    * **수정:** 결과가 1MB 공유 메모리 출력 버퍼를 넘으면 빈 배열 대신 오류를 반환합니다.
+    * **기능:** `sendTask(taskType, metadata)`로 `ai_worker.py`에 등록된 임의 작업을 호출하고 결과를 UTF-8 문자열로 받습니다.
+    * **보안:** Windows 공유 메모리 매핑 권한을 Everyone에서 소유 사용자와 SYSTEM(`D:P(A;;GA;;;OW)(A;;GA;;;SY)`)으로 제한했습니다.
     * **버그 수정:** macOS/Linux venv 프로비저닝을 `PATH`에서 시스템 `python3.12`/`python3.11`/`python3.13`/`python3`를 찾는 방식에서 `uv venv --python 3.11 --seed`로 전환 — 설치돼 있는 버전에 의존하는 대신 정확한 인터프리터 버전을 고정한다. 시스템 `python3`가 3.13 이상뿐이라 `requirements.txt`에 고정된 `numpy`/`torch` 등의 wheel이 없어 설치가 실패하던 로컬 환경 문제를 해결한다.
     * **기능:** OpenAI Whisper 기반 오디오 전사 지원 — Java 쪽에 `processAudio(data, length, sampleRate)` 신규 추가, `ai_worker.py`에 `WHISPER` 태스크 핸들러 추가. 기존 범용 `executeTask` JNI 호출을 그대로 재사용(새 native 진입점 없음). 이미 가변 길이 payload를 지원하는 파일 기반 IPC 폴백 경로를 그대로 탄다.
     * **기능:** `initialize(workDir, modelPath, confidence, memoryKey, whisperModelPath)` 오버로드 추가 — 기존 YOLO 모델/신뢰도와 함께 Whisper 모델(이름 또는 로컬 체크포인트 경로)을 설정 가능.

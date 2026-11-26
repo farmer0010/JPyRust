@@ -220,11 +220,42 @@ public class SpeechService {
 * **Docker:** the published base image ships no Python and no `uv`, so AI inference features do not currently work inside the container — see the Docker note below.
 </details>
 
+<details>
+<summary><strong>⏱️ 4. Errors & Timeouts</strong></summary>
+
+Native failures surface as Java exceptions instead of crashing the JVM or returning `null`.
+
+| Situation | What you get |
+| --- | --- |
+| `processImage` / `processAudio` / `sendTask` before `initialize()` or after `close()` | `IllegalStateException` |
+| Python task fails (decode error, unknown task, missing model, ...) | `RuntimeException` with the worker's `ERROR ...` message |
+| Result larger than the 1 MB shared-memory output buffer (YOLO, EDGE_DETECT) | `RuntimeException` (`Output too large: ...`) |
+| Heap `ByteBuffer` passed, or `length` larger than the buffer | `RuntimeException` (`Input must be a direct ByteBuffer` / `Invalid input length ...`) |
+| Python daemon does not start during `initialize()` | `RuntimeException` (`Failed to initialize JPyRustBridge`, cause `Daemon start failed: ...`) |
+
+`processEdgeDetection` still returns `null` on failure, and `processNlp` / `processRegression` still return an `{"error": ...}` JSON string — these wrappers catch the exception themselves.
+
+| Timeout | Value | On expiry |
+| --- | --- | --- |
+| Daemon startup (waiting for `READY`, includes model loading) | 600 s | Process is killed, call throws |
+| Single task (waiting for `DONE` / `ERROR`) | 300 s | Process is killed, call throws; the next call spawns a fresh daemon (startup timeout applies again) |
+
+* Timeouts are fixed constants (`READY_TIMEOUT`, `TASK_TIMEOUT` in `rust-bridge/src/lib.rs`) and are not configurable yet.
+* Each instance has one daemon and processes requests one at a time, so a task that hangs blocks other requests on the same instance for up to 300 s. Use separate instances (`new JPyRustBridge("id")`) for independent workloads.
+* A crashed daemon is respawned automatically on the next call; that call pays the startup cost (model reload).
+</details>
+
 ---
 
 ## 📜 Version History
 
 * **Unreleased**
+    * **Behavior Change:** `processImage`, `processAudio` and the new `sendTask` throw `RuntimeException` on failure instead of returning `null`; calling them before `initialize()` or after `close()` throws `IllegalStateException`. `initialize()` now throws if the Python daemon fails to start (previously it only logged and left the bridge half-initialized). See *Errors & Timeouts* above.
+    * **Fix:** Rust JNI entry points are wrapped in `catch_unwind` — a native panic or JNI error becomes a Java exception instead of aborting the JVM. `executeTask` and `close()` are synchronized, so closing during an in-flight call can no longer free native state underneath it.
+    * **Fix:** Waiting on the Python daemon now actually times out (600 s startup, 300 s per task); a hung or dead daemon is killed and respawned on the next call. The previous 600 s startup timeout never fired because the read it guarded was blocking.
+    * **Fix:** Results larger than the 1 MB shared-memory output buffer raise an error instead of silently returning an empty array.
+    * **Feature:** `sendTask(taskType, metadata)` calls any task registered in `ai_worker.py` and returns its output as a UTF-8 string.
+    * **Security:** Windows shared-memory mappings are restricted to the owning user and SYSTEM (`D:P(A;;GA;;;OW)(A;;GA;;;SY)`) instead of Everyone.
     * **Fix:** macOS/Linux venv provisioning switched from searching `PATH` for a system `python3.12`/`python3.11`/`python3.13`/`python3` to `uv venv --python 3.11 --seed`, which pins an exact interpreter version instead of depending on whatever happens to be installed. This fixes local environments where the only system `python3` was 3.13+ and `requirements.txt`'s pinned `numpy`/`torch`/etc. had no matching wheels.
     * **Feature:** Audio transcription via OpenAI Whisper — new `processAudio(data, length, sampleRate)` on the Java side and a `WHISPER` task handler in `ai_worker.py`, reusing the existing generic `executeTask` JNI call (no new native entry point). Routes through the file-based IPC fallback, which already supports variable-length payloads.
     * **Feature:** `initialize(workDir, modelPath, confidence, memoryKey, whisperModelPath)` overload to configure the Whisper model (name or local checkpoint path) alongside the existing YOLO model/confidence.
