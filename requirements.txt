@@ -1,19 +1,1 @@
-# Core Dependencies (Pinned for stability)
 numpy==1.26.4
-opencv-python-headless==4.10.0.84
-ultralytics==8.2.0
-pandas==2.2.0
-scikit-learn==1.4.0
-textblob==0.18.0.post0
-requests==2.31.0
-pillow==10.2.0
-
-# Dependencies to avoid auto-upgrade conflicts
-scipy==1.12.0
-torch==2.2.0
-torchvision==0.17.0
-
-# Whisper (audio recognition)
-openai-whisper==20231117
-tiktoken==0.7.0
-numba==0.59.0

@@ -1,6 +1,7 @@
 package com.jpyrust;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.charset.StandardCharsets;
@@ -20,11 +21,13 @@ public class PythonProvisioningTest {
 
     @Test
     public void firstInitializeProvisionsPythonAndAnswersStatus() throws Exception {
-        JPyRustBridge bridge = new JPyRustBridge("provision_test");
+        JPyRustBridge bridge = new JPyRustBridge("provision_test").extras("vision", "audio", "ml");
         try {
             bridge.initialize(workDir.toString());
             String status = bridge.sendTask("STATUS", "NONE");
             assertTrue(status.contains("\"status\": \"UP\""), status);
+            String sentiment = bridge.processNlp("This is great");
+            assertTrue(sentiment.startsWith("POSITIVE"), sentiment);
         } finally {
             bridge.close();
         }
@@ -33,7 +36,7 @@ public class PythonProvisioningTest {
         Path python = isWindows ? workDir.resolve("python_dist/python.exe") : workDir.resolve("venv/bin/python3");
         assertTrue(Files.exists(python), python.toString());
 
-        Process imports = new ProcessBuilder(python.toString(), "-c", "import torch, ultralytics, whisper")
+        Process imports = new ProcessBuilder(python.toString(), "-c", "import torch, ultralytics, whisper, sklearn, textblob")
                 .inheritIO()
                 .start();
         assertEquals(0, imports.waitFor());
@@ -53,6 +56,8 @@ public class PythonProvisioningTest {
             String echoed = new String(bridge.call("ECHO", "안녕".getBytes(StandardCharsets.UTF_8), "x y"),
                     StandardCharsets.UTF_8);
             assertEquals("{\"text\": \"\uc548\ub155\", \"args\": \"x y\"}", echoed);
+            RuntimeException error = assertThrows(RuntimeException.class, () -> bridge.call("REGRESSION", "[]"));
+            assertTrue(error.getMessage().contains("requires extras(\"ml\")"), error.getMessage());
         } finally {
             bridge.close();
         }

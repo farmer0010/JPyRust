@@ -18,7 +18,7 @@ public class DemoApplication {
     public JPyRustBridge jpyRustBridge(@Value("${app.ai.work-dir}") String workDir,
             @Value("${app.ai.model-path:yolov8n.pt}") String modelPath,
             @Value("${app.ai.confidence:0.5}") float confidence) {
-        JPyRustBridge bridge = new JPyRustBridge("demo-web");
+        JPyRustBridge bridge = new JPyRustBridge("demo-web").extras("vision", "audio", "ml");
         System.out.println("Scheduling JPyRust initialization (non-blocking)...");
         CompletableFuture.runAsync(() -> {
             try {

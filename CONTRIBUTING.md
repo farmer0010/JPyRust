@@ -46,7 +46,7 @@ Other targets: `make jar` builds the library JAR, and `make provision-test` prov
 
 `make` isn't available on Windows by default; use the commands above directly.
 
-After changing `requirements.txt` or the Python version, re-check YOLO/Whisper output against `baseline/` as described in [`test-fixtures/README.md`](test-fixtures/README.md).
+After changing `requirements.txt`, `python-core/extras/*.txt` or the Python version, re-check YOLO/Whisper output against `baseline/` as described in [`test-fixtures/README.md`](test-fixtures/README.md).
 
 ## Pull requests
 

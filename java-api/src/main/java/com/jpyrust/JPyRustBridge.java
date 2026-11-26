@@ -15,6 +15,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -29,6 +30,7 @@ public class JPyRustBridge {
     private static final String EMBEDDED_PYTHON_SHA256 = "009d6bf7e3b2ddca3d784fa09f90fe54336d5b60f0e0f305c37f400bf83cfd3b";
     private static final String PIP_WHEEL_URL = "https://files.pythonhosted.org/packages/8a/6a/19e9fe04fca059ccf770861c7d5721ab4c2aebc539889e97c7977528a53b/pip-24.0-py3-none-any.whl";
     private static final String PIP_WHEEL_SHA256 = "ba0d021a166865d2265246961bec0152ff124de910c5cc39f1156ce3fa7c69dc";
+    private static final List<String> AVAILABLE_EXTRAS = List.of("vision", "audio", "ml");
 
     static {
         try {
@@ -45,6 +47,7 @@ public class JPyRustBridge {
     private Path pythonExe;
     private Path requirementsFile;
     private final List<Path> moduleDirs = new ArrayList<>();
+    private final List<String> extras = new ArrayList<>();
     private final ReentrantReadWriteLock lifecycleLock = new ReentrantReadWriteLock();
 
     public JPyRustBridge(String instanceId) {
@@ -64,6 +67,21 @@ public class JPyRustBridge {
             throw new IllegalStateException("moduleDir() must be called before initialize()");
         }
         moduleDirs.add(dir.toAbsolutePath().normalize());
+        return this;
+    }
+
+    public synchronized JPyRustBridge extras(String... names) {
+        if (initialized) {
+            throw new IllegalStateException("extras() must be called before initialize()");
+        }
+        for (String name : names) {
+            if (!AVAILABLE_EXTRAS.contains(name)) {
+                throw new IllegalArgumentException("Unknown extra: " + name + " (available: " + AVAILABLE_EXTRAS + ")");
+            }
+            if (!extras.contains(name)) {
+                extras.add(name);
+            }
+        }
         return this;
     }
 
@@ -126,6 +144,12 @@ public class JPyRustBridge {
         } else {
             NativeLoader.extractFile("/requirements.txt", requirements);
         }
+        for (String extra : extras) {
+            NativeLoader.extractFile("/extras/" + extra + ".py", targetDir.resolve("extras/" + extra + ".py"));
+            Path extraRequirements = targetDir.resolve("extras/" + extra + ".txt");
+            NativeLoader.extractFile("/extras/" + extra + ".txt", extraRequirements);
+            Files.writeString(requirements, "\n" + Files.readString(extraRequirements), StandardOpenOption.APPEND);
+        }
         writeWorkerConfig(targetDir.resolve("worker.json"));
         String requirementsHash = sha256Hex(Files.readAllBytes(requirements));
 
@@ -137,7 +161,14 @@ public class JPyRustBridge {
     }
 
     private void writeWorkerConfig(Path configFile) throws Exception {
-        StringBuilder json = new StringBuilder("{\"module_dirs\": [");
+        StringBuilder json = new StringBuilder("{\"extras\": [");
+        for (int i = 0; i < extras.size(); i++) {
+            if (i > 0) {
+                json.append(", ");
+            }
+            json.append('"').append(extras.get(i)).append('"');
+        }
+        json.append("], \"module_dirs\": [");
         for (int i = 0; i < moduleDirs.size(); i++) {
             if (i > 0) {
                 json.append(", ");
