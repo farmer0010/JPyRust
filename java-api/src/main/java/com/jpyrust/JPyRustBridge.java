@@ -5,15 +5,27 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStreamReader;
+import java.net.ProxySelector;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
+import java.security.MessageDigest;
+import java.time.Duration;
+import java.util.HexFormat;
 import java.util.Locale;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class JPyRustBridge {
+
+    private static final String EMBEDDED_PYTHON_URL = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip";
+    private static final String EMBEDDED_PYTHON_SHA256 = "009d6bf7e3b2ddca3d784fa09f90fe54336d5b60f0e0f305c37f400bf83cfd3b";
+    private static final String PIP_WHEEL_URL = "https://files.pythonhosted.org/packages/8a/6a/19e9fe04fca059ccf770861c7d5721ab4c2aebc539889e97c7977528a53b/pip-24.0-py3-none-any.whl";
+    private static final String PIP_WHEEL_SHA256 = "ba0d021a166865d2265246961bec0152ff124de910c5cc39f1156ce3fa7c69dc";
 
     static {
         try {
@@ -27,7 +39,6 @@ public class JPyRustBridge {
     private long nativePtr = 0;
     private boolean initialized = false;
     private String workDir;
-    private Path pythonHome;
     private Path pythonExe;
     private final ReentrantReadWriteLock lifecycleLock = new ReentrantReadWriteLock();
 
@@ -86,18 +97,13 @@ public class JPyRustBridge {
     private void setupEmbeddedPython(Path targetDir) throws Exception {
         boolean isWindows = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
 
+        NativeLoader.extractFile("/ai_worker.py", targetDir.resolve("ai_worker.py"));
+        NativeLoader.extractFile("/requirements.txt", targetDir.resolve("requirements.txt"));
+
         if (isWindows) {
             setupWindowsEmbeddedPython(targetDir);
         } else {
             setupSystemVenvPython(targetDir);
-        }
-
-        Path workerScript = targetDir.resolve("ai_worker.py");
-        if (!Files.exists(workerScript)) {
-            Path bundled = pythonHome.resolve("ai_worker.py");
-            if (Files.exists(bundled)) {
-                Files.copy(bundled, workerScript, StandardCopyOption.REPLACE_EXISTING);
-            }
         }
     }
 
@@ -111,54 +117,69 @@ public class JPyRustBridge {
                     (Files.exists(sitePackages.resolve("ultralytics"))
                             || Files.exists(sitePackages.resolve("torch")))) {
                 Files.createFile(markerFile);
-                this.pythonHome = pythonDistDir;
                 this.pythonExe = pythonDistDir.resolve("python.exe");
                 return;
             }
 
-            NativeLoader.extractZip("/python_dist.zip", pythonDistDir);
-
-            Path pthFile = pythonDistDir.resolve("python311._pth");
-            if (Files.exists(pthFile)) {
-                Files.write(pthFile, "python311.zip\n.\nimport site".getBytes());
-            }
+            Path downloads = targetDir.resolve("downloads");
+            Path pythonZip = download(EMBEDDED_PYTHON_URL, EMBEDDED_PYTHON_SHA256,
+                    downloads.resolve("python-3.11.9-embed-amd64.zip"));
+            NativeLoader.extractZip(pythonZip, pythonDistDir);
+            Files.write(pythonDistDir.resolve("python311._pth"), "python311.zip\n.\nimport site".getBytes());
 
             Path pyExe = pythonDistDir.resolve("python.exe");
-            Path requirements = targetDir.resolve("requirements.txt");
-
-            if (Files.exists(requirements)) {
-                ProcessBuilder pipPb = new ProcessBuilder(
-                        pyExe.toString(),
-                        "-m", "pip", "install",
-                        "--no-index",
-                        "--find-links=wheels",
-                        "-r", requirements.toString());
-                pipPb.directory(targetDir.toFile());
-                pipPb.redirectErrorStream(true);
-                Process pipProc = pipPb.start();
-
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(pipProc.getInputStream()))) {
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                    }
-                }
-                pipProc.waitFor();
-            }
+            Path pipWheel = download(PIP_WHEEL_URL, PIP_WHEEL_SHA256, downloads.resolve("pip-24.0-py3-none-any.whl"));
+            NativeLoader.extractZip(pipWheel, pythonDistDir.resolve("Lib/site-packages"));
+            runOrFail("Failed to pre-install setuptools/wheel in " + pythonDistDir, targetDir,
+                    pyExe.toString(), "-m", "pip", "install", "setuptools<70", "wheel");
+            runOrFail("pip install failed for requirements.txt in " + pythonDistDir, targetDir,
+                    pyExe.toString(), "-m", "pip", "install", "--no-build-isolation",
+                    "-r", targetDir.resolve("requirements.txt").toString());
             Files.createFile(markerFile);
         }
 
-        this.pythonHome = pythonDistDir;
         this.pythonExe = pythonDistDir.resolve("python.exe");
+    }
+
+    private Path download(String url, String expectedSha256, Path target) throws Exception {
+        Files.createDirectories(target.getParent());
+        log("INFO", "Downloading " + url);
+        HttpClient client = HttpClient.newBuilder()
+                .followRedirects(HttpClient.Redirect.NORMAL)
+                .proxy(ProxySelector.getDefault())
+                .connectTimeout(Duration.ofSeconds(30))
+                .build();
+        HttpResponse<Path> response = client.send(HttpRequest.newBuilder(URI.create(url)).build(),
+                HttpResponse.BodyHandlers.ofFile(target));
+        if (response.statusCode() != 200) {
+            Files.deleteIfExists(target);
+            throw new RuntimeException("Download failed (HTTP " + response.statusCode() + "): " + url);
+        }
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        String actual = HexFormat.of().formatHex(digest.digest(Files.readAllBytes(target)));
+        if (!actual.equals(expectedSha256)) {
+            Files.deleteIfExists(target);
+            throw new RuntimeException("Checksum mismatch for " + url + ": expected " + expectedSha256 + ", got " + actual);
+        }
+        return target;
+    }
+
+    private void runOrFail(String failureMessage, Path workingDir, String... command) throws Exception {
+        ProcessBuilder pb = new ProcessBuilder(command);
+        pb.directory(workingDir.toFile());
+        pb.redirectErrorStream(true);
+        Process process = pb.start();
+        drainQuietly(process);
+        if (process.waitFor() != 0) {
+            throw new RuntimeException(failureMessage);
+        }
     }
 
     private void setupSystemVenvPython(Path targetDir) throws Exception {
         Path markerFile = targetDir.resolve(".installed");
         Path venvDir = targetDir.resolve("venv");
         Path venvPython = venvDir.resolve("bin/python3");
-
-        NativeLoader.extractFile("/ai_worker.py", targetDir.resolve("ai_worker.py"));
         Path requirements = targetDir.resolve("requirements.txt");
-        NativeLoader.extractFile("/requirements.txt", requirements);
 
         if (!Files.exists(markerFile)) {
             String uv = findUv();
@@ -202,7 +223,6 @@ public class JPyRustBridge {
             Files.createFile(markerFile);
         }
 
-        this.pythonHome = targetDir;
         this.pythonExe = venvPython;
     }
 

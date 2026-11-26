@@ -34,7 +34,7 @@ Unlike slow `ProcessBuilder` or high-latency HTTP APIs, JPyRust leverages **Rust
 ### 🌟 Why JPyRust?
 * 🚀 **Zero-Latency**: Uses System RAM (Shared Memory) instead of HTTP/Sockets.
 * 🔄 **True Parallelism**: v1.3.0 supports **Multi-Instance** architecture (1 Java App connects to N Python Processes).
-* 🛠️ **Zero-Config**: Auto-provisions its Python environment on first run — a fully embedded distribution on Windows, a `uv`-managed venv on macOS/Linux. No manual `pip install`. On macOS/Linux the interpreter itself is fetched over the network on first run too (`uv` downloads a portable Python 3.11, ~25MB) — it's no longer assumed to already be on your machine.
+* 🛠️ **Zero-Config**: Auto-provisions its Python environment on first run — the official embeddable Python on Windows, a `uv`-managed venv on macOS/Linux. No manual `pip install`. The interpreter itself is fetched over the network on first run on every platform (python.org's embeddable Python 3.11.9 on Windows, ~11MB; a portable Python 3.11 via `uv` on macOS/Linux, ~25MB) — it's never assumed to already be on your machine.
 * 🛡️ **Crash-Proof**: Rust monitors Python health and auto-restarts workers if they crash.
 
 ---
@@ -214,7 +214,7 @@ public class SpeechService {
 <details>
 <summary><strong>🐍 3. Python Dependency Issues</strong></summary>
 
-* **Windows:** JPyRust includes a **portable embedded Python**. It bootstraps itself in `~/.jpyrust/<instanceId>/python_dist`.
+* **Windows:** on the first `initialize()`, JPyRust downloads python.org's embeddable Python 3.11.9 and a pinned `pip` wheel, verifies both against SHA-256 hashes built into the library, unpacks Python into `~/.jpyrust/<instanceId>/python_dist`, and installs `requirements.txt` (including Whisper) from PyPI. Nothing extra needs to be installed, but the first run needs network access to python.org and PyPI (honoring `https.proxyHost` for the downloads and `HTTPS_PROXY` for pip). It runs once per instance directory (tracked by `python_dist/.installed`); a failed download, checksum mismatch or pip error makes `initialize()` throw.
 * **macOS / Linux:** there is no portable embedded Python for these platforms, so JPyRust requires [`uv`](https://docs.astral.sh/uv/getting-started/installation/) on your `PATH` and runs `uv venv --python 3.11 --seed` to provision a private virtualenv at `~/.jpyrust/<instanceId>/venv`, then installs `requirements.txt` into it. `uv` fetches a portable Python 3.11 on first run if one isn't already managed by `uv` — no manual interpreter install needed. This runs once per instance directory (tracked by a `.installed` marker) — delete that directory to force a clean reinstall. Install `uv` via `curl -LsSf https://astral.sh/uv/install.sh | sh` or a package manager, e.g. `brew install uv` on macOS.
 * If libraries are missing, check `requirements.txt` in the resource folder.
 * **Docker:** the published base image ships no Python and no `uv`, so AI inference features do not currently work inside the container — see the Docker note below.

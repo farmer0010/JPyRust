@@ -31,8 +31,8 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 cd ..
 
-# Java (JITPACK=true skips downloading the ~400 MB Windows embedded Python bundle)
-JITPACK=true ./gradlew :java-api:test :demo-web:compileJava
+# Java
+./gradlew :java-api:test :demo-web:compileJava
 
 # Python
 uv venv --python 3.11 .venv
