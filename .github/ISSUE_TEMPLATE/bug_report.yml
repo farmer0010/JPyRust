@@ -1,0 +1,49 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimal Java code or steps. Include the task (YOLO, WHISPER, ...) and input size if relevant.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: JPyRust version
+      placeholder: "1.3.1 or a commit SHA"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - windows-x86_64
+        - linux-x86_64
+        - linux-aarch64
+        - darwin-aarch64 (Apple Silicon)
+        - darwin-x86_64 (Intel Mac)
+        - other
+    validations:
+      required: true
+  - type: input
+    id: runtime
+    attributes:
+      label: JDK and Python versions
+      placeholder: "JDK 17.0.10, Python 3.11.9 (uv venv)"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Exception stack trace and any `[JPyRust-...]` / `[NativeLoader]` / `[JPyRust-Native]` lines.
+      render: text
