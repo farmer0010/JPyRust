@@ -153,7 +153,7 @@ jobs:
       run: ./gradlew :java-api:test --tests com.jpyrust.PythonProvisioningTest --console=plain
 
     - name: Upload test report
-      if: failure()
+      if: always()
       uses: actions/upload-artifact@v4
       with:
         name: windows-provision-report
