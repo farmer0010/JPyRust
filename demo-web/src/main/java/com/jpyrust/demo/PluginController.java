@@ -8,7 +8,11 @@ import java.util.Map;
 @RequestMapping("/api/plugin")
 public class PluginController {
 
-    private final JPyRustBridge bridge = new JPyRustBridge();
+    private final JPyRustBridge bridge;
+
+    public PluginController(JPyRustBridge bridge) {
+        this.bridge = bridge;
+    }
 
     @PostMapping("/{taskType}")
     public Map<String, Object> executePlugin(@PathVariable String taskType, @RequestBody Map<String, Object> payload) {

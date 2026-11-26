@@ -11,7 +11,11 @@ import java.util.Map;
 @RequestMapping("/api")
 public class StatusController {
 
-    private final JPyRustBridge bridge = new JPyRustBridge();
+    private final JPyRustBridge bridge;
+
+    public StatusController(JPyRustBridge bridge) {
+        this.bridge = bridge;
+    }
     private final ObjectMapper mapper = new ObjectMapper();
 
     @GetMapping("/status")

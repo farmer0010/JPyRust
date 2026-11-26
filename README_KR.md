@@ -207,7 +207,7 @@ public class SpeechService {
 <summary><strong>🛡️ 2. WinError 5 (Access Denied)</strong></summary>
 
 * **원인:** Windows의 공유 메모리 생성 시 보안 권한 문제입니다.
-* **해결:** JPyRust v1.2+ 버전은 `SECURITY_ATTRIBUTES`와 SDDL `D:(A;;GA;;;WD)` 설정을 적용하여, 자식 프로세스가 권한 문제 없이 접근할 수 있도록 해결되었습니다. 별도 조치가 필요 없습니다.
+* **해결:** JPyRust v1.2+ 버전은 `SECURITY_ATTRIBUTES`와 SDDL `D:P(A;;GA;;;OW)(A;;GA;;;SY)` 설정을 적용하여, 소유 사용자와 SYSTEM에게만 접근을 허용하고 같은 사용자로 실행되는 Python 자식 프로세스가 권한 문제 없이 접근할 수 있도록 해결되었습니다. 별도 조치가 필요 없습니다.
 </details>
 
 <details>

@@ -4,16 +4,38 @@ use jni::objects::{JByteBuffer, JString, JObject};
 use jni::sys::{jint, jbyteArray, jlong};
 use std::fs::File;
 use std::io::{Read, Write, BufRead, BufReader, BufWriter};
-use std::process::{Command, Child, Stdio, ChildStdin, ChildStdout};
-use std::sync::Mutex;
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::process::{Command, Child, Stdio, ChildStdin};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::{Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 
 const OUTPUT_SHM_SIZE: usize = 1024 * 1024;
+const READY_TIMEOUT: Duration = Duration::from_secs(600);
+const TASK_TIMEOUT: Duration = Duration::from_secs(300);
 
 struct PythonDaemon {
     child: Child,
     stdin: BufWriter<ChildStdin>,
-    stdout: BufReader<ChildStdout>,
+    lines: Receiver<String>,
+}
+
+impl PythonDaemon {
+    fn wait_for_line<F: Fn(&str) -> bool>(&self, timeout: Duration, accept: F) -> Result<String, String> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match self.lines.recv_timeout(remaining) {
+                Ok(line) if accept(&line) => return Ok(line),
+                Ok(_) => {}
+                Err(RecvTimeoutError::Timeout) => {
+                    return Err(format!("Timed out after {}s waiting for Python daemon", timeout.as_secs()))
+                }
+                Err(RecvTimeoutError::Disconnected) => return Err("Python daemon closed".to_string()),
+            }
+        }
+    }
 }
 
 impl Drop for PythonDaemon {
@@ -57,7 +79,7 @@ impl BridgeState {
             Ok(())
         })();
 
-        if let Err(_) = status {
+        if status.is_err() {
             if env.exception_check().unwrap_or(false) {
                 let _ = env.exception_describe();
                 let _ = env.exception_clear();
@@ -124,84 +146,133 @@ impl BridgeState {
         let stdin = child.stdin.take().ok_or("Failed to capture stdin")?;
         let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
 
-        let stdin_writer = BufWriter::new(stdin);
-        let mut stdout_reader = BufReader::new(stdout);
-
-        let mut ready_line = String::new();
-        let timeout_start = std::time::Instant::now();
-        let timeout_duration = std::time::Duration::from_secs(600);
-
-        loop {
-            if timeout_start.elapsed() > timeout_duration {
-                child.kill().ok();
-                return Err("Timeout waiting for Python READY".to_string());
-            }
-
-            match stdout_reader.read_line(&mut ready_line) {
-                Ok(0) => {
-                    child.kill().ok();
-                    return Err("Python process exited early".to_string());
-                }
-                Ok(_) => {
-                    let trimmed = ready_line.trim();
-                    if trimmed == "READY" { break; }
-                    ready_line.clear();
-                }
-                Err(e) => {
-                    child.kill().ok();
-                    return Err(format!("Error reading from Python: {}", e));
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut reader = BufReader::new(stdout);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                match reader.read_line(&mut line) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {
+                        if tx.send(line.trim().to_string()).is_err() {
+                            break;
+                        }
+                    }
                 }
             }
-        }
+        });
 
-        Ok(PythonDaemon {
+        let daemon = PythonDaemon {
             child,
-            stdin: stdin_writer,
-            stdout: stdout_reader,
-        })
+            stdin: BufWriter::new(stdin),
+            lines: rx,
+        };
+
+        daemon
+            .wait_for_line(READY_TIMEOUT, |line| line == "READY")
+            .map_err(|e| format!("Python daemon did not become READY: {}", e))?;
+
+        Ok(daemon)
     }
 
-    fn get_or_spawn_daemon(&self) -> Result<(), String> {
-        let mut daemon_guard = self.daemon.lock().unwrap();
-        if let Some(ref mut daemon) = *daemon_guard {
-            match daemon.child.try_wait() {
-                Ok(Some(_)) => {}
-                Ok(None) => return Ok(()),
-                Err(_) => {}
+    fn lock_daemon(&self) -> MutexGuard<'_, Option<PythonDaemon>> {
+        self.daemon.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn ensure_daemon(&self, guard: &mut Option<PythonDaemon>) -> Result<(), String> {
+        if let Some(daemon) = guard.as_mut() {
+            if let Ok(None) = daemon.child.try_wait() {
+                return Ok(());
             }
         }
-        let daemon = self.spawn_python_daemon()?;
-        *daemon_guard = Some(daemon);
+        *guard = Some(self.spawn_python_daemon()?);
         Ok(())
     }
 
-    fn send_execute_command(&self, task_type: &str, request_id: &str, metadata: &str) -> Result<String, String> {
-        let mut daemon_guard = self.daemon.lock().unwrap();
-        let daemon = daemon_guard.as_mut().ok_or("Python daemon not initialized")?;
+    fn start_daemon(&self) -> Result<(), String> {
+        let mut guard = self.lock_daemon();
+        self.ensure_daemon(&mut guard)
+    }
 
-        let command = format!("EXECUTE {} {} {}\n", task_type, request_id, metadata);
-        daemon.stdin.write_all(command.as_bytes()).map_err(|e| e.to_string())?;
-        daemon.stdin.flush().map_err(|e| e.to_string())?;
+    fn execute(&self, task_type: &str, request_id: &str, metadata: &str) -> Result<String, String> {
+        let mut guard = self.lock_daemon();
+        self.ensure_daemon(&mut guard)?;
 
-        let mut response = String::new();
-        loop {
-            response.clear();
-            match daemon.stdout.read_line(&mut response) {
-                Ok(0) => return Err("Python daemon closed".to_string()),
-                Ok(_) => {
-                    let trimmed = response.trim();
-                    if trimmed.starts_with("DONE") { return Ok(trimmed.to_string()); }
-                    else if trimmed.starts_with("ERROR") { return Err(trimmed.to_string()); }
-                }
-                Err(e) => return Err(e.to_string()),
-            }
+        let result = Self::send_execute_command(guard.as_mut().unwrap(), task_type, request_id, metadata);
+        if let Err(DaemonError::Broken(_)) = &result {
+            *guard = None;
         }
+        result.map_err(|e| match e {
+            DaemonError::Task(msg) | DaemonError::Broken(msg) => msg,
+        })
+    }
+
+    fn send_execute_command(
+        daemon: &mut PythonDaemon,
+        task_type: &str,
+        request_id: &str,
+        metadata: &str,
+    ) -> Result<String, DaemonError> {
+        let command = format!("EXECUTE {} {} {}\n", task_type, request_id, metadata);
+        daemon.stdin.write_all(command.as_bytes()).map_err(|e| DaemonError::Broken(e.to_string()))?;
+        daemon.stdin.flush().map_err(|e| DaemonError::Broken(e.to_string()))?;
+
+        let response = daemon
+            .wait_for_line(TASK_TIMEOUT, |line| line.starts_with("DONE") || line.starts_with("ERROR"))
+            .map_err(|e| DaemonError::Broken(format!("{} (task {}, restarting daemon)", e, task_type)))?;
+
+        if response.starts_with("ERROR") {
+            return Err(DaemonError::Task(response));
+        }
+        Ok(response)
     }
 }
 
-unsafe fn get_state<'a>(env: &mut JNIEnv<'a>, obj: &JObject<'a>) -> &'a BridgeState {
-    let ptr = env.get_field(obj, "nativePtr", "J").unwrap().j().unwrap();
-    &*(ptr as *const BridgeState)
+enum DaemonError {
+    Task(String),
+    Broken(String),
+}
+
+fn jerr(e: jni::errors::Error) -> String {
+    e.to_string()
+}
+
+fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        format!("Native panic: {}", s)
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        format!("Native panic: {}", s)
+    } else {
+        "Native panic".to_string()
+    }
+}
+
+fn run_jni<'local, T, F>(env: &mut JNIEnv<'local>, default: T, f: F) -> T
+where
+    F: FnOnce(&mut JNIEnv<'local>) -> Result<T, String>,
+{
+    let message = match catch_unwind(AssertUnwindSafe(|| f(env))) {
+        Ok(Ok(value)) => return value,
+        Ok(Err(msg)) => msg,
+        Err(payload) => panic_message(payload),
+    };
+    if !env.exception_check().unwrap_or(false) {
+        let _ = env.throw_new("java/lang/RuntimeException", message);
+    }
+    default
+}
+
+fn get_state<'a>(env: &mut JNIEnv, obj: &JObject) -> Result<&'a BridgeState, String> {
+    let ptr = env.get_field(obj, "nativePtr", "J").map_err(jerr)?.j().map_err(jerr)?;
+    if ptr == 0 {
+        return Err("JPyRustBridge is not initialized or already closed".to_string());
+    }
+    Ok(unsafe { &*(ptr as *const BridgeState) })
+}
+
+fn get_rust_string(env: &mut JNIEnv, s: &JString) -> Result<String, String> {
+    Ok(env.get_string(s).map_err(jerr)?.into())
 }
 
 #[no_mangle]
@@ -215,36 +286,45 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_initNative<'local>(
     memory_key: JString<'local>,
     whisper_model: JString<'local>,
 ) {
-    let work_dir_str: String = env.get_string(&work_dir).unwrap().into();
-    let model_path_str: String = env.get_string(&model_path).unwrap().into();
-    let memory_key_str: String = env.get_string(&memory_key).unwrap().into();
-    let whisper_model_str: String = env.get_string(&whisper_model).unwrap().into();
-    let instance_id_obj = env.get_field(&obj, "instanceId", "Ljava/lang/String;").unwrap().l().unwrap();
-    let instance_id: JString = instance_id_obj.into();
-    let instance_id_str: String = env.get_string(&instance_id).unwrap().into();
+    run_jni(&mut env, (), |env| {
+        let work_dir_str = get_rust_string(env, &work_dir)?;
+        let model_path_str = get_rust_string(env, &model_path)?;
+        let memory_key_str = get_rust_string(env, &memory_key)?;
+        let whisper_model_str = get_rust_string(env, &whisper_model)?;
+        let instance_id: JString = env
+            .get_field(&obj, "instanceId", "Ljava/lang/String;")
+            .map_err(jerr)?
+            .l()
+            .map_err(jerr)?
+            .into();
+        let instance_id_str = get_rust_string(env, &instance_id)?;
 
-    let vm = env.get_java_vm().unwrap();
-    let global_obj = env.new_global_ref(&obj).unwrap();
+        let vm = env.get_java_vm().map_err(jerr)?;
+        let global_obj = env.new_global_ref(&obj).map_err(jerr)?;
 
-    let state = Box::new(BridgeState {
-        daemon: Mutex::new(None),
-        work_dir: work_dir_str,
-        session_key: memory_key_str,
-        instance_id: instance_id_str,
-        java_vm: vm,
-        bridge_obj: global_obj,
-        model_path: model_path_str,
-        confidence,
-        whisper_model_path: whisper_model_str,
-    });
+        let state = Box::new(BridgeState {
+            daemon: Mutex::new(None),
+            work_dir: work_dir_str,
+            session_key: memory_key_str,
+            instance_id: instance_id_str,
+            java_vm: vm,
+            bridge_obj: global_obj,
+            model_path: model_path_str,
+            confidence,
+            whisper_model_path: whisper_model_str,
+        });
 
-    let state_ptr = Box::into_raw(state) as jlong;
-    env.set_field(&obj, "nativePtr", "J", jni::objects::JValue::Long(state_ptr)).unwrap();
+        if let Err(e) = state.start_daemon() {
+            return Err(format!("Daemon start failed: {}", e));
+        }
 
-    let state = unsafe { &*(state_ptr as *const BridgeState) };
-    if let Err(e) = state.get_or_spawn_daemon() {
-        state.log_to_java("ERROR", &format!("Daemon start failed: {}", e));
-    }
+        let state_ptr = Box::into_raw(state) as jlong;
+        if let Err(e) = env.set_field(&obj, "nativePtr", "J", jni::objects::JValue::Long(state_ptr)) {
+            drop(unsafe { Box::from_raw(state_ptr as *mut BridgeState) });
+            return Err(jerr(e));
+        }
+        Ok(())
+    })
 }
 
 #[no_mangle]
@@ -258,115 +338,104 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_executeTask<'local>(
     input_data: JByteBuffer<'local>,
     input_length: jint,
 ) -> jbyteArray {
-    let state = unsafe { get_state(&mut env, &obj) };
-    
-    let task_type_str: String = env.get_string(&task_type).unwrap().into();
-    let request_id_str: String = env.get_string(&request_id).unwrap().into();
-    let metadata_str: String = env.get_string(&metadata).unwrap().into();
+    run_jni(&mut env, std::ptr::null_mut(), |env| {
+        let state = get_state(env, &obj)?;
 
-    let length = input_length as usize;
-    let buffer_ptr = env.get_direct_buffer_address(&input_data).unwrap();
-    let data = unsafe { std::slice::from_raw_parts(buffer_ptr, length) };
+        let task_type_str = get_rust_string(env, &task_type)?;
+        let request_id_str = get_rust_string(env, &request_id)?;
+        let metadata_str = get_rust_string(env, &metadata)?;
 
-    if !["YOLO", "EDGE_DETECT"].contains(&task_type_str.as_str()) {
-        return execute_with_file_fallback(&mut env, state, &task_type_str, &request_id_str, &metadata_str, data);
-    }
-
-    let shm_name_in = format!("{}_{}", state.session_key, &request_id_str[..6.min(request_id_str.len())]);
-    let mut shm_in = match create_shmem_permissive(&shm_name_in, length) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("[JPyRust-Native] SHMEM-IN creation failed: {}", e);
-            return execute_with_file_fallback(&mut env, state, &task_type_str, &request_id_str, &metadata_str, data);
+        let capacity = env
+            .get_direct_buffer_capacity(&input_data)
+            .map_err(|e| format!("Input must be a direct ByteBuffer ({})", e))?;
+        if input_length < 0 || input_length as usize > capacity {
+            return Err(format!("Invalid input length {} for buffer capacity {}", input_length, capacity));
         }
-    };
+        let length = input_length as usize;
+        let buffer_ptr = env.get_direct_buffer_address(&input_data).map_err(jerr)?;
+        let data = unsafe { std::slice::from_raw_parts(buffer_ptr, length) };
 
-    unsafe { shm_in.as_slice_mut()[..length].copy_from_slice(data); }
-
-    let shm_name_out = format!("{}_out_{}", state.session_key, &request_id_str[..6.min(request_id_str.len())]);
-    let shm_out = match create_shmem_permissive(&shm_name_out, OUTPUT_SHM_SIZE) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("[JPyRust-Native] SHMEM-OUT creation failed: {}", e);
-            return execute_with_file_fallback(&mut env, state, &task_type_str, &request_id_str, &metadata_str, data);
-        }
-    };
-
-    eprintln!("[JPyRust-Native] [IPC] Mode: SHMEM | Task: {} | ReqID: {}", task_type_str, request_id_str);
-    state.log_to_java("INFO", &format!("[IPC] Mode: SHMEM | Task: {} | ReqID: {}", task_type_str, &request_id_str[..6.min(request_id_str.len())]));
-    let shmem_metadata = format!("SHMEM {} {} {} {} {}", shm_name_in, length, shm_name_out, OUTPUT_SHM_SIZE, metadata_str);
-
-    let mut final_result_len = 0;
-    if let Err(_) = state.get_or_spawn_daemon() { return std::ptr::null_mut(); }
-
-    match state.send_execute_command(&task_type_str, &request_id_str, &shmem_metadata) {
-        Ok(result) => {
-            if let Some(len_str) = result.strip_prefix("DONE ") {
-                final_result_len = len_str.trim().parse().unwrap_or(0);
-            }
-        }
-        Err(_) => return std::ptr::null_mut(),
-    }
-
-    let output_data = if final_result_len > 0 && final_result_len <= OUTPUT_SHM_SIZE {
-        unsafe { shm_out.as_slice()[..final_result_len].to_vec() }
-    } else {
-        Vec::new()
-    };
-
-    match env.new_byte_array(output_data.len() as i32) {
-        Ok(arr) => {
-            let signed: Vec<i8> = output_data.iter().map(|&b| b as i8).collect();
-            env.set_byte_array_region(&arr, 0, &signed).unwrap();
-            arr.into_raw()
-        }
-        Err(_) => std::ptr::null_mut()
-    }
+        let output = execute_task(state, &task_type_str, &request_id_str, &metadata_str, data)?;
+        let array = env.byte_array_from_slice(&output).map_err(jerr)?;
+        Ok(array.into_raw())
+    })
 }
 
-fn execute_with_file_fallback(
-    env: &mut JNIEnv,
+fn execute_task(
     state: &BridgeState,
     task_type: &str,
     request_id: &str,
     metadata: &str,
     data: &[u8],
-) -> jbyteArray {
+) -> Result<Vec<u8>, String> {
+    if !["YOLO", "EDGE_DETECT"].contains(&task_type) {
+        return execute_with_file_fallback(state, task_type, request_id, metadata, data);
+    }
+
+    let short_id = &request_id[..6.min(request_id.len())];
+    let length = data.len();
+
+    let shm_name_in = format!("{}_{}", state.session_key, short_id);
+    let mut shm_in = match create_shmem_permissive(&shm_name_in, length) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("[JPyRust-Native] SHMEM-IN creation failed: {}", e);
+            return execute_with_file_fallback(state, task_type, request_id, metadata, data);
+        }
+    };
+
+    unsafe { shm_in.as_slice_mut()[..length].copy_from_slice(data); }
+
+    let shm_name_out = format!("{}_out_{}", state.session_key, short_id);
+    let shm_out = match create_shmem_permissive(&shm_name_out, OUTPUT_SHM_SIZE) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("[JPyRust-Native] SHMEM-OUT creation failed: {}", e);
+            return execute_with_file_fallback(state, task_type, request_id, metadata, data);
+        }
+    };
+
+    eprintln!("[JPyRust-Native] [IPC] Mode: SHMEM | Task: {} | ReqID: {}", task_type, request_id);
+    state.log_to_java("INFO", &format!("[IPC] Mode: SHMEM | Task: {} | ReqID: {}", task_type, short_id));
+    let shmem_metadata = format!("SHMEM {} {} {} {} {}", shm_name_in, length, shm_name_out, OUTPUT_SHM_SIZE, metadata);
+
+    let response = state.execute(task_type, request_id, &shmem_metadata)?;
+    let result_len: usize = response
+        .strip_prefix("DONE ")
+        .and_then(|len| len.trim().parse().ok())
+        .ok_or_else(|| format!("Malformed response from Python daemon: {}", response))?;
+
+    if result_len > OUTPUT_SHM_SIZE {
+        return Err(format!(
+            "Output size {} bytes exceeds shared memory capacity {} bytes",
+            result_len, OUTPUT_SHM_SIZE
+        ));
+    }
+
+    Ok(unsafe { shm_out.as_slice()[..result_len].to_vec() })
+}
+
+fn execute_with_file_fallback(
+    state: &BridgeState,
+    task_type: &str,
+    request_id: &str,
+    metadata: &str,
+    data: &[u8],
+) -> Result<Vec<u8>, String> {
     eprintln!("[JPyRust-Native] [IPC] Mode: FILE-FALLBACK | Task: {} | ReqID: {}", task_type, request_id);
     state.log_to_java("WARN", &format!("[IPC] Mode: FILE-FALLBACK | Task: {} | ReqID: {}", task_type, &request_id[..8.min(request_id.len())]));
     let input_file = format!("{}/input_{}.dat", state.work_dir, request_id);
     let output_file = format!("{}/output_{}.dat", state.work_dir, request_id);
-    
-    if let Err(_) = write_data_file(&input_file, data) { return std::ptr::null_mut(); }
 
-    if let Err(_) = state.get_or_spawn_daemon() { return std::ptr::null_mut(); }
-
-    match state.send_execute_command(task_type, request_id, metadata) {
-        Ok(_) => {}
-        Err(_) => {
-            cleanup_files(&input_file, &output_file);
-            return std::ptr::null_mut();
-        }
-    }
-
-    let output_data = match read_data_file(&output_file) {
-        Ok(data) => data,
-        Err(_) => {
-            cleanup_files(&input_file, &output_file);
-            return std::ptr::null_mut();
-        }
-    };
+    let result = write_data_file(&input_file, data)
+        .map_err(|e| format!("Failed to write input file {}: {}", input_file, e))
+        .and_then(|_| state.execute(task_type, request_id, metadata))
+        .and_then(|_| {
+            read_data_file(&output_file).map_err(|e| format!("Failed to read output file {}: {}", output_file, e))
+        });
 
     cleanup_files(&input_file, &output_file);
-
-    match env.new_byte_array(output_data.len() as i32) {
-        Ok(arr) => {
-            let signed: Vec<i8> = output_data.iter().map(|&b| b as i8).collect();
-            env.set_byte_array_region(&arr, 0, &signed).unwrap();
-            arr.into_raw()
-        }
-        Err(_) => std::ptr::null_mut()
-    }
+    result
 }
 
 #[no_mangle]
@@ -374,20 +443,16 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_closeNative<'local>(
     mut env: JNIEnv<'local>,
     obj: JObject<'local>,
 ) {
-    let state_ptr_value = match env.get_field(&obj, "nativePtr", "J") {
-        Ok(v) => v.j().unwrap_or(0),
-        Err(_) => return,
-    };
-    
-    if state_ptr_value == 0 { return; }
+    run_jni(&mut env, (), |env| {
+        let state_ptr_value = env.get_field(&obj, "nativePtr", "J").map_err(jerr)?.j().map_err(jerr)?;
+        if state_ptr_value == 0 {
+            return Ok(());
+        }
 
-    let state_ptr = state_ptr_value as *mut BridgeState;
-    unsafe {
-        let _ = Box::from_raw(state_ptr); // This triggers Drop for BridgeState -> PythonDaemon -> child.kill()
-    }
-    
-    // Set nativePtr to 0 to prevent double-free
-    let _ = env.set_field(&obj, "nativePtr", "J", jni::objects::JValue::Long(0));
+        env.set_field(&obj, "nativePtr", "J", jni::objects::JValue::Long(0)).map_err(jerr)?;
+        drop(unsafe { Box::from_raw(state_ptr_value as *mut BridgeState) });
+        Ok(())
+    })
 }
 
 #[cfg(target_os = "windows")]
@@ -440,7 +505,7 @@ fn create_shmem_permissive(name: &str, size: usize) -> Result<CustomShmem, Strin
 
     unsafe {
         let mut sd: *mut c_void = ptr::null_mut();
-        let sddl = "D:(A;;GA;;;WD)\0".encode_utf16().collect::<Vec<u16>>();
+        let sddl = "D:P(A;;GA;;;OW)(A;;GA;;;SY)\0".encode_utf16().collect::<Vec<u16>>();
         if ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.as_ptr(), 1, &mut sd, ptr::null_mut()) == 0 {
             let err = GetLastError();
             eprintln!("[JPyRust-Native] SDDL conversion failed: error {}", err);
@@ -509,4 +574,125 @@ fn read_data_file(path: &str) -> std::io::Result<Vec<u8>> {
 fn cleanup_files(input: &str, output: &str) {
     let _ = std::fs::remove_file(input);
     let _ = std::fs::remove_file(output);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_path(name: &str) -> String {
+        std::env::temp_dir()
+            .join(format!("jpyrust_test_{}_{}", std::process::id(), name))
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    #[test]
+    fn data_file_round_trip() {
+        let path = temp_path("roundtrip.dat");
+        let payload = vec![0u8, 1, 2, 255, 128, 64];
+        write_data_file(&path, &payload).unwrap();
+        assert_eq!(read_data_file(&path).unwrap(), payload);
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn data_file_header_is_big_endian_length() {
+        let path = temp_path("header.dat");
+        write_data_file(&path, &vec![7u8; 300]).unwrap();
+        let raw = std::fs::read(&path).unwrap();
+        assert_eq!(&raw[..4], &[0, 0, 1, 44]);
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn truncated_data_file_is_an_error() {
+        let path = temp_path("truncated.dat");
+        std::fs::write(&path, [0, 0, 0, 10, 1, 2]).unwrap();
+        assert!(read_data_file(&path).is_err());
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[cfg(unix)]
+    fn spawn_fake_daemon(script: &str) -> PythonDaemon {
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg(script)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines() {
+                match line {
+                    Ok(l) => {
+                        if tx.send(l.trim().to_string()).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        PythonDaemon { child, stdin: BufWriter::new(stdin), lines: rx }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wait_for_line_skips_noise_until_match() {
+        let daemon = spawn_fake_daemon("echo noise; echo READY; sleep 5");
+        let line = daemon.wait_for_line(Duration::from_secs(5), |l| l == "READY").unwrap();
+        assert_eq!(line, "READY");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wait_for_line_times_out_on_silent_daemon() {
+        let daemon = spawn_fake_daemon("sleep 5");
+        let started = Instant::now();
+        let err = daemon.wait_for_line(Duration::from_millis(200), |_| true).unwrap_err();
+        assert!(err.contains("Timed out"));
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wait_for_line_reports_closed_daemon() {
+        let daemon = spawn_fake_daemon("exit 0");
+        let err = daemon.wait_for_line(Duration::from_secs(5), |_| true).unwrap_err();
+        assert_eq!(err, "Python daemon closed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn python_error_is_a_task_error() {
+        let mut daemon = spawn_fake_daemon("read _; echo 'ERROR boom'; sleep 5");
+        match BridgeState::send_execute_command(&mut daemon, "YOLO", "req", "meta") {
+            Err(DaemonError::Task(msg)) => assert_eq!(msg, "ERROR boom"),
+            _ => panic!("expected task error"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn closed_daemon_is_a_broken_error() {
+        let mut daemon = spawn_fake_daemon("read _; exit 0");
+        match BridgeState::send_execute_command(&mut daemon, "YOLO", "req", "meta") {
+            Err(DaemonError::Broken(msg)) => assert!(msg.contains("Python daemon closed")),
+            _ => panic!("expected broken daemon"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn done_response_is_returned() {
+        let mut daemon = spawn_fake_daemon("read _; echo 'progress'; echo 'DONE 42'; sleep 5");
+        match BridgeState::send_execute_command(&mut daemon, "YOLO", "req", "meta") {
+            Ok(line) => assert_eq!(line, "DONE 42"),
+            _ => panic!("expected DONE"),
+        }
+    }
 }

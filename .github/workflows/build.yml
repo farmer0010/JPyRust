@@ -8,7 +8,7 @@ on:
     branches: [ "main" ]
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -65,28 +65,6 @@ jobs:
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
 
-    # 3. Log Debugging & Build Prep
-    - name: Debug Environment
-      shell: bash
-      run: |
-        echo "=== Environment Variables ==="
-        env
-        echo "=== File System (Recursive) ==="
-        echo "=== File System (Recursive) ==="
-        ls -R
-        
-        # Windows Linker Check (cmd-friendly check not needed here, will do in build step)
-        if [ "${{ matrix.os }}" == "windows-latest" ]; then
-             echo "Skipping bash-based link check on Windows"
-        fi
-        
-        # macOS Explicit JAVA_HOME injection check (User requirement)
-        if [ "${{ matrix.os }}" == "macos-latest" ]; then
-            echo "Injecting MacOS specific JAVA_HOME..."
-            export JAVA_HOME=$(/usr/libexec/java_home)
-            echo "JAVA_HOME is now: $JAVA_HOME"
-        fi
-
     # 4. Dependency Isolation & Build
     # 4. Dependency Isolation & Build
     
@@ -101,6 +79,7 @@ jobs:
         
         echo Building in %CD%
         cargo build --release
+        cargo test
 
     # Linux/macOS Build (Bash)
     - name: Build Release (Unix)
@@ -115,6 +94,8 @@ jobs:
         
         echo "Building in $(pwd)..."
         cargo build --release
+        cargo clippy --all-targets -- -D warnings
+        cargo test
 
     - name: Upload Artifact (Windows)
       if: matrix.os == 'windows-latest'
@@ -137,14 +118,50 @@ jobs:
         name: jpyrust-macos
         path: rust-bridge/target/release/libjpyrust.dylib
 
+  java-test:
+    name: Java tests
+    runs-on: ubuntu-latest
+    env:
+      JITPACK: "true"
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    - name: Test java-api and compile demo-web
+      run: ./gradlew :java-api:test :demo-web:compileJava --console=plain
+
+  python-test:
+    name: Python tests
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install test dependencies
+      run: pip install numpy opencv-python-headless pytest
+
+    - name: Run pytest
+      run: pytest python-core/tests -q
+
   # ====================================
   # Release Job: Create GitHub Release
   # ====================================
   release:
     name: Create Release
-    needs: build
+    needs: [build, java-test, python-test]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
     
     steps:
     - name: Download All Artifacts
