@@ -208,7 +208,7 @@ public class SpeechService {
 <summary><strong>🛡️ 2. WinError 5 (Access Denied)</strong></summary>
 
 * **Cause:** Windows Security permissions on Shared Memory.
-* **Fix:** JPyRust v1.2+ uses explicit `SECURITY_ATTRIBUTES` with SDDL `D:(A;;GA;;;WD)` to allow Full Access to the Python child process. No manual action required.
+* **Fix:** JPyRust v1.2+ uses explicit `SECURITY_ATTRIBUTES` with SDDL `D:P(A;;GA;;;OW)(A;;GA;;;SY)`, granting access only to the owning user and SYSTEM so the Python child process (same user) can open the mapping. No manual action required.
 </details>
 
 <details>

@@ -11,6 +11,12 @@ import java.util.Map;
 @RequestMapping("/api/ai")
 public class AITextController {
 
+    private final JPyRustBridge bridge;
+
+    public AITextController(JPyRustBridge bridge) {
+        this.bridge = bridge;
+    }
+
     @PostMapping(value = "/text", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<Map<String, Object>> analyzeText(@RequestBody Map<String, String> request) {
         String text = request.get("text");
@@ -25,8 +31,7 @@ public class AITextController {
         long startTime = System.nanoTime();
 
         try {
-            JPyRustBridge bridge = new JPyRustBridge();
-            String result = bridge.processText(text);
+            String result = bridge.processNlp(text);
 
             long elapsed = (System.nanoTime() - startTime) / 1_000_000;
 

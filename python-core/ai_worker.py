@@ -140,7 +140,8 @@ def parse_input_protocol(request_id, metadata, task_type=None):
 def write_output_data(request_id, data_bytes, out_shm_info):
     if out_shm_info:
         shm_name, capacity = out_shm_info
-        if len(data_bytes) > capacity: return 0
+        if len(data_bytes) > capacity:
+            raise ValueError(f"Output too large: {len(data_bytes)} bytes exceeds shared memory capacity {capacity} bytes")
         for attempt in range(15):
             try:
                 shm = multiprocessing.shared_memory.SharedMemory(name=shm_name)
@@ -149,7 +150,7 @@ def write_output_data(request_id, data_bytes, out_shm_info):
                 return len(data_bytes)
             except:
                 time.sleep(0.05 + attempt * 0.01)
-        return 0
+        raise RuntimeError("Output SHMEM write failed")
     else:
         output_path = os.path.join(WORK_DIR, f"output_{request_id}.dat")
         with open(output_path, "wb") as f:

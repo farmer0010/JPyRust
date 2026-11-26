@@ -11,6 +11,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.Locale;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class JPyRustBridge {
 
@@ -28,6 +29,7 @@ public class JPyRustBridge {
     private String workDir;
     private Path pythonHome;
     private Path pythonExe;
+    private final ReentrantReadWriteLock lifecycleLock = new ReentrantReadWriteLock();
 
     public JPyRustBridge(String instanceId) {
         this.instanceId = instanceId;
@@ -68,8 +70,13 @@ public class JPyRustBridge {
 
             setupEmbeddedPython(workPath);
 
-            initNative(workDir, workDir, modelPath, confidence, memoryKey, whisperModelPath);
-            initialized = true;
+            lifecycleLock.writeLock().lock();
+            try {
+                initNative(workDir, workDir, modelPath, confidence, memoryKey, whisperModelPath);
+                initialized = true;
+            } finally {
+                lifecycleLock.writeLock().unlock();
+            }
 
         } catch (Exception e) {
             throw new RuntimeException("Failed to initialize JPyRustBridge", e);
@@ -234,21 +241,39 @@ public class JPyRustBridge {
     private native byte[] executeTask(String workDir, String taskType, String requestId, String metadata,
             ByteBuffer data, int length);
 
+    private byte[] invokeTask(String taskType, String requestId, String metadata, ByteBuffer data, int length) {
+        lifecycleLock.readLock().lock();
+        try {
+            if (!initialized) {
+                throw new IllegalStateException("JPyRustBridge is not initialized or already closed");
+            }
+            return executeTask(workDir, taskType, requestId, metadata, data, length);
+        } finally {
+            lifecycleLock.readLock().unlock();
+        }
+    }
+
+    public String sendTask(String taskType, String metadata) {
+        String requestId = java.util.UUID.randomUUID().toString();
+        byte[] result = invokeTask(taskType, requestId, metadata, ByteBuffer.allocateDirect(1), 0);
+        return new String(result, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
     public byte[] processImage(ByteBuffer data, int length, int width, int height, int channels) {
         String requestId = java.util.UUID.randomUUID().toString();
         String metadata = width + " " + height + " " + channels;
-        return executeTask(this.workDir, "YOLO", requestId, metadata, data, length);
+        return invokeTask("YOLO", requestId, metadata, data, length);
     }
 
     public byte[] processImage(ByteBuffer data, int length, int width, int height, int channels, String requestId) {
         String metadata = width + " " + height + " " + channels;
-        return executeTask(this.workDir, "YOLO", requestId, metadata, data, length);
+        return invokeTask("YOLO", requestId, metadata, data, length);
     }
 
     public byte[] processAudio(ByteBuffer data, int length, int sampleRate) {
         String requestId = java.util.UUID.randomUUID().toString();
         String metadata = String.valueOf(sampleRate);
-        return executeTask(this.workDir, "WHISPER", requestId, metadata, data, length);
+        return invokeTask("WHISPER", requestId, metadata, data, length);
     }
 
     public byte[] processEdgeDetection(byte[] imageData, int width, int height, int channels) {
@@ -260,7 +285,7 @@ public class JPyRustBridge {
             String metadata = width + " " + height + " " + channels;
             String requestId = java.util.UUID.randomUUID().toString();
 
-            byte[] result = executeTask(this.workDir, "EDGE_DETECT", requestId, metadata, directBuffer,
+            byte[] result = invokeTask("EDGE_DETECT", requestId, metadata, directBuffer,
                     imageData.length);
             return result != null ? result : new byte[0];
         } catch (Exception e) {
@@ -278,7 +303,7 @@ public class JPyRustBridge {
             String requestId = java.util.UUID.randomUUID().toString();
             String metadata = "TEXT";
 
-            byte[] resultBytes = executeTask(this.workDir, "NLP_TEXTBLOB", requestId, metadata, directBuffer,
+            byte[] resultBytes = invokeTask("NLP_TEXTBLOB", requestId, metadata, directBuffer,
                     textBytes.length);
 
             if (resultBytes == null)
@@ -299,7 +324,7 @@ public class JPyRustBridge {
             String requestId = java.util.UUID.randomUUID().toString();
             String metadata = "JSON";
 
-            byte[] resultBytes = executeTask(this.workDir, "REGRESSION", requestId, metadata, directBuffer,
+            byte[] resultBytes = invokeTask("REGRESSION", requestId, metadata, directBuffer,
                     jsonBytes.length);
 
             if (resultBytes == null)
@@ -406,9 +431,14 @@ public class JPyRustBridge {
     }
 
     public synchronized void close() {
-        if (initialized) {
-            closeNative();
-            initialized = false;
+        lifecycleLock.writeLock().lock();
+        try {
+            if (initialized) {
+                closeNative();
+                initialized = false;
+            }
+        } finally {
+            lifecycleLock.writeLock().unlock();
         }
     }
 }

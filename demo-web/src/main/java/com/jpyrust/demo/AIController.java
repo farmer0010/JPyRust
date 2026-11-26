@@ -10,7 +10,11 @@ import java.util.Map;
 @RequestMapping("/api/ai")
 public class AIController {
 
-    private final JPyRustBridge bridge = new JPyRustBridge();
+    private final JPyRustBridge bridge;
+
+    public AIController(JPyRustBridge bridge) {
+        this.bridge = bridge;
+    }
 
     @GetMapping("/chat")
     public Map<String, Object> chat(@RequestParam String message, @RequestParam int id) {
