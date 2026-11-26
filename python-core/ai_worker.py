@@ -10,8 +10,19 @@ import importlib.util
 import glob
 import json
 import wave
-import numpy as np
-import cv2
+
+try:
+    import numpy as np
+except ImportError:
+    np = None
+
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import jpyrust
 
 if sys.platform == 'win32':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
@@ -87,6 +98,48 @@ def initialize_models():
             except Exception:
                 whisper_model = None
     load_plugins()
+    load_user_modules()
+
+def load_user_modules():
+    config_path = os.path.join(WORK_DIR, "worker.json")
+    if not os.path.exists(config_path):
+        return
+    with open(config_path, encoding="utf-8") as f:
+        module_dirs = json.load(f).get("module_dirs", [])
+    for module_dir in module_dirs:
+        if module_dir not in sys.path:
+            sys.path.insert(0, module_dir)
+        for module_file in sorted(glob.glob(os.path.join(module_dir, "*.py"))):
+            module_name = os.path.splitext(os.path.basename(module_file))[0]
+            try:
+                spec = importlib.util.spec_from_file_location(module_name, module_file)
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[module_name] = module
+                spec.loader.exec_module(module)
+            except Exception as e:
+                sys.modules.pop(module_name, None)
+                print(f"[JPyRust-Worker] Failed to load {module_file}: {e}", file=sys.stderr, flush=True)
+    for task_name, fn in jpyrust.registered_tasks().items():
+        TASK_HANDLERS[task_name] = make_task_handler(fn)
+
+def to_output_bytes(result):
+    if result is None:
+        return b""
+    if isinstance(result, (bytes, bytearray, memoryview)):
+        return bytes(result)
+    if isinstance(result, str):
+        return result.encode("utf-8")
+    return json.dumps(result, ensure_ascii=False).encode("utf-8")
+
+def make_task_handler(fn):
+    def handle(request_id, raw_metadata):
+        try:
+            data, metadata, out_info = parse_input_protocol(request_id, raw_metadata)
+            written = write_output_data(request_id, to_output_bytes(fn(data, " ".join(metadata))), out_info)
+            return f"DONE {written}"
+        except Exception as e:
+            return "ERROR " + " ".join(f"{type(e).__name__}: {e}".split())
+    return handle
 
 def load_plugins():
     plugin_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plugins")

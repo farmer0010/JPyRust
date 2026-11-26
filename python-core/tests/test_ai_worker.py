@@ -78,3 +78,99 @@ def test_daemon_status_round_trip(tmp_path):
     finally:
         if proc.poll() is None:
             proc.kill()
+
+
+USER_MODULE = '''
+from jpyrust import task
+
+
+@task("ECHO")
+def echo(data, args):
+    return {"text": data.decode("utf-8"), "args": args}
+
+
+@task
+def shout(data, args):
+    return data.decode("utf-8").upper()
+
+
+@task("BOOM")
+def boom(data, args):
+    raise ValueError("bad\\ninput")
+'''
+
+
+def start_daemon(work_dir, module_dir, prelude=""):
+    with open(os.path.join(work_dir, "worker.json"), "w", encoding="utf-8") as f:
+        json.dump({"module_dirs": [str(module_dir)]}, f)
+    script = (
+        prelude
+        + "import runpy, sys\n"
+        + f"sys.argv = [{WORKER_PATH!r}, '--daemon', '--work-dir', {str(work_dir)!r}]\n"
+        + f"runpy.run_path({WORKER_PATH!r}, run_name='__main__')\n"
+    )
+    return subprocess.Popen(
+        [sys.executable, "-c", script],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
+def execute(proc, work_dir, task, request_id, payload, args=""):
+    write_input_file(work_dir, request_id, payload)
+    proc.stdin.write(f"EXECUTE {task} {request_id} {args}\n")
+    proc.stdin.flush()
+    return proc.stdout.readline().strip()
+
+
+def stop(proc):
+    proc.stdin.write("EXIT\n")
+    proc.stdin.flush()
+    assert proc.wait(timeout=10) == 0
+
+
+@pytest.fixture
+def module_dir(tmp_path):
+    path = tmp_path / "modules"
+    path.mkdir()
+    (path / "user_tasks.py").write_text(USER_MODULE, encoding="utf-8")
+    (path / "broken.py").write_text("raise RuntimeError('broken on import')\n", encoding="utf-8")
+    return path
+
+
+def test_registered_tasks_run_through_daemon(tmp_path, module_dir):
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    proc = start_daemon(work_dir, module_dir)
+    try:
+        assert proc.stdout.readline().strip() == "READY"
+
+        assert execute(proc, work_dir, "ECHO", "r1", "안녕".encode("utf-8"), "a b").startswith("DONE ")
+        assert json.loads(read_output_file(work_dir, "r1")) == {"text": "안녕", "args": "a b"}
+
+        assert execute(proc, work_dir, "shout", "r2", b"hi").startswith("DONE ")
+        assert read_output_file(work_dir, "r2") == b"HI"
+
+        assert execute(proc, work_dir, "BOOM", "r3", b"") == "ERROR ValueError: bad input"
+
+        stop(proc)
+        assert "broken.py" in proc.stderr.read()
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+
+def test_daemon_starts_without_numpy_or_cv2(tmp_path, module_dir):
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    proc = start_daemon(work_dir, module_dir, prelude="import sys\nsys.modules['numpy'] = None\nsys.modules['cv2'] = None\n")
+    try:
+        assert proc.stdout.readline().strip() == "READY"
+        assert execute(proc, work_dir, "SHOUT", "r1", b"ok").startswith("DONE ")
+        assert read_output_file(work_dir, "r1") == b"OK"
+        stop(proc)
+    finally:
+        if proc.poll() is None:
+            proc.kill()

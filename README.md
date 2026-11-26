@@ -192,6 +192,34 @@ public class SpeechService {
 
 > Audio input is expected as a WAV container (16kHz, mono, 16-bit PCM). `confidence` is an approximation derived from Whisper's per-segment `avg_logprob`, not a calibrated probability.
 
+### 4. Usage (Java) — Your Own Python Code
+
+Register any Python function as a task and call it from Java. You choose the Python dependencies; the built-in YOLO/Whisper stack is only installed when you don't pass your own `requirements.txt`.
+
+```python
+# tasks/text_tasks.py
+from jpyrust import task
+
+@task("WORD_COUNT")
+def word_count(data: bytes, args: str):
+    return {"words": len(data.decode("utf-8").split()), "args": args}
+```
+
+```java
+JPyRustBridge bridge = new JPyRustBridge("text")
+        .requirements(Path.of("python/requirements.txt"))
+        .moduleDir(Path.of("python/tasks"));
+bridge.initialize();
+
+String json = bridge.call("WORD_COUNT", "hello jpyrust");        // {"words": 2, "args": ""}
+byte[] raw = bridge.call("WORD_COUNT", bytes, "any args here");  // raw bytes in, raw bytes out
+```
+
+* A task receives the input bytes and the `args` string. Returning `bytes` sends them as-is, `str` is UTF-8 encoded, anything else is sent as JSON. An exception becomes a `RuntimeException` in Java.
+* Every `.py` file in each `moduleDir` is imported at daemon start. Task names are case-insensitive, and a registered task replaces a built-in one with the same name. A module that fails to import is reported on stderr and skipped.
+* `requirements(...)` replaces the bundled `requirements.txt`. The install is keyed by the file's SHA-256, so changing it re-runs `pip install` on the next `initialize()`.
+* Custom tasks go through the file-based IPC path, so their output has no 1 MB limit.
+
 
 ---
 
@@ -227,7 +255,7 @@ Native failures surface as Java exceptions instead of crashing the JVM or return
 
 | Situation | What you get |
 | --- | --- |
-| `processImage` / `processAudio` / `sendTask` before `initialize()` or after `close()` | `IllegalStateException` |
+| `processImage` / `processAudio` / `sendTask` / `call` before `initialize()` or after `close()` | `IllegalStateException` |
 | Python task fails (decode error, unknown task, missing model, ...) | `RuntimeException` with the worker's `ERROR ...` message |
 | Result larger than the 1 MB shared-memory output buffer (YOLO, EDGE_DETECT) | `RuntimeException` (`Output too large: ...`) |
 | Heap `ByteBuffer` passed, or `length` larger than the buffer | `RuntimeException` (`Input must be a direct ByteBuffer` / `Invalid input length ...`) |

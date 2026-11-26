@@ -1,6 +1,9 @@
 # 변경 이력
 
 * **Unreleased**
+    * **기능:** 내 Python 코드 호출. 새 `jpyrust` 모듈의 `@task`로 Python 함수를 등록하고, `moduleDir(Path)`로 모듈 위치를, `requirements(Path)`로 의존성 목록을 지정한 뒤 `call(task, bytes, args)` / `call(task, text)`로 호출합니다. 결과는 바이트, UTF-8 문자열, JSON으로 돌아옵니다.
+    * **동작 변경:** `.installed` 마커에 `requirements.txt`의 SHA-256을 기록하고, 다르면 `pip install`을 다시 실행합니다. 기존 설치는 다음 `initialize()`에서 `pip install`을 한 번 더 실행합니다(바뀐 게 없으면 금방 끝남).
+    * **수정:** `numpy`/`opencv`가 없어도 Python 워커가 뜹니다. 이를 쓰는 내장 작업만 실패합니다.
     * **동작 변경:** Windows용 임베디드 Python(~400MB)을 더 이상 JAR에 넣지 않습니다. 첫 `initialize()` 때 python.org의 임베디드 Python 3.11.9와 버전이 고정된 `pip` wheel을 내려받고(둘 다 SHA-256 검증), PyPI에서 `requirements.txt`를 설치하므로 첫 실행에는 네트워크가 필요합니다. 이제 Windows에서도 Whisper를 쓸 수 있습니다. JAR은 1MB 미만으로 줄었고, JitPack JAR과 GitHub Release JAR이 Windows에서 똑같이 동작합니다(이전에는 JitPack JAR에 Python 번들이 아예 없었음).
     * **수정:** Windows 의존성 설치 실패를 더 이상 조용히 무시하지 않습니다 — pip이 실패하면 `initialize()`가 예외를 던집니다.
     * **동작 변경:** `processImage`, `processAudio`, 새로 추가된 `sendTask`는 실패 시 `null` 대신 `RuntimeException`을 던집니다. `initialize()` 전이나 `close()` 후에 호출하면 `IllegalStateException`이 발생합니다. `initialize()`는 Python 데몬 기동에 실패하면 예외를 던집니다(이전에는 로그만 남기고 반쯤 초기화된 상태로 남았음). [README](README_KR.md)의 *오류 처리와 타임아웃*을 참고하세요.

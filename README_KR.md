@@ -192,6 +192,34 @@ public class SpeechService {
 
 > 오디오 입력은 WAV 컨테이너(16kHz, mono, 16-bit PCM)를 가정합니다. `confidence`는 보정된 확률이 아니라 Whisper 세그먼트별 `avg_logprob`에서 유도한 근사치입니다.
 
+### 4. 사용법 (Java) — 내 Python 코드 호출
+
+아무 Python 함수나 작업으로 등록해 Java에서 부를 수 있습니다. Python 의존성은 직접 정합니다. 내장 YOLO/Whisper 스택은 `requirements.txt`를 따로 지정하지 않았을 때만 설치됩니다.
+
+```python
+# tasks/text_tasks.py
+from jpyrust import task
+
+@task("WORD_COUNT")
+def word_count(data: bytes, args: str):
+    return {"words": len(data.decode("utf-8").split()), "args": args}
+```
+
+```java
+JPyRustBridge bridge = new JPyRustBridge("text")
+        .requirements(Path.of("python/requirements.txt"))
+        .moduleDir(Path.of("python/tasks"));
+bridge.initialize();
+
+String json = bridge.call("WORD_COUNT", "hello jpyrust");        // {"words": 2, "args": ""}
+byte[] raw = bridge.call("WORD_COUNT", bytes, "any args here");  // 바이트 입력, 바이트 출력
+```
+
+* 작업 함수는 입력 바이트와 `args` 문자열을 받습니다. `bytes`를 반환하면 그대로, `str`은 UTF-8로, 그 밖의 값은 JSON으로 보냅니다. 함수에서 난 예외는 Java에서 `RuntimeException`이 됩니다.
+* 각 `moduleDir`의 모든 `.py` 파일을 데몬 시작 시 import합니다. 작업 이름은 대소문자를 구분하지 않고, 등록한 작업은 같은 이름의 내장 작업을 대체합니다. import에 실패한 모듈은 stderr에 알리고 건너뜁니다.
+* `requirements(...)`는 내장 `requirements.txt`를 대체합니다. 설치 여부는 파일의 SHA-256으로 판단하므로, 파일을 바꾸면 다음 `initialize()`에서 `pip install`을 다시 실행합니다.
+* 사용자 작업은 파일 기반 IPC 경로를 타므로 출력에 1MB 제한이 없습니다.
+
 ---
 
 ## 🛠️ 설정 및 문제 해결 (Troubleshooting)
@@ -226,7 +254,7 @@ public class SpeechService {
 
 | 상황 | 결과 |
 | --- | --- |
-| `initialize()` 전이나 `close()` 후에 `processImage` / `processAudio` / `sendTask` 호출 | `IllegalStateException` |
+| `initialize()` 전이나 `close()` 후에 `processImage` / `processAudio` / `sendTask` / `call` 호출 | `IllegalStateException` |
 | Python 작업 실패 (디코딩 실패, 알 수 없는 작업, 모델 없음 등) | 워커의 `ERROR ...` 메시지를 담은 `RuntimeException` |
 | 결과가 1MB 공유 메모리 출력 버퍼보다 큼 (YOLO, EDGE_DETECT) | `RuntimeException` (`Output too large: ...`) |
 | heap `ByteBuffer`를 넘기거나 `length`가 버퍼보다 큼 | `RuntimeException` (`Input must be a direct ByteBuffer` / `Invalid input length ...`) |

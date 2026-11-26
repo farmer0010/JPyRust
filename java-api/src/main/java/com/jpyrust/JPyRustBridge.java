@@ -14,9 +14,12 @@ import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
@@ -40,10 +43,28 @@ public class JPyRustBridge {
     private boolean initialized = false;
     private String workDir;
     private Path pythonExe;
+    private Path requirementsFile;
+    private final List<Path> moduleDirs = new ArrayList<>();
     private final ReentrantReadWriteLock lifecycleLock = new ReentrantReadWriteLock();
 
     public JPyRustBridge(String instanceId) {
         this.instanceId = instanceId;
+    }
+
+    public synchronized JPyRustBridge requirements(Path file) {
+        if (initialized) {
+            throw new IllegalStateException("requirements() must be called before initialize()");
+        }
+        this.requirementsFile = file;
+        return this;
+    }
+
+    public synchronized JPyRustBridge moduleDir(Path dir) {
+        if (initialized) {
+            throw new IllegalStateException("moduleDir() must be called before initialize()");
+        }
+        moduleDirs.add(dir.toAbsolutePath().normalize());
+        return this;
     }
 
     public synchronized void initialize() {
@@ -98,47 +119,70 @@ public class JPyRustBridge {
         boolean isWindows = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
 
         NativeLoader.extractFile("/ai_worker.py", targetDir.resolve("ai_worker.py"));
-        NativeLoader.extractFile("/requirements.txt", targetDir.resolve("requirements.txt"));
+        NativeLoader.extractFile("/jpyrust.py", targetDir.resolve("jpyrust.py"));
+        Path requirements = targetDir.resolve("requirements.txt");
+        if (requirementsFile != null) {
+            Files.copy(requirementsFile, requirements, StandardCopyOption.REPLACE_EXISTING);
+        } else {
+            NativeLoader.extractFile("/requirements.txt", requirements);
+        }
+        writeWorkerConfig(targetDir.resolve("worker.json"));
+        String requirementsHash = sha256Hex(Files.readAllBytes(requirements));
 
         if (isWindows) {
-            setupWindowsEmbeddedPython(targetDir);
+            setupWindowsEmbeddedPython(targetDir, requirementsHash);
         } else {
-            setupSystemVenvPython(targetDir);
+            setupSystemVenvPython(targetDir, requirementsHash);
         }
     }
 
-    private void setupWindowsEmbeddedPython(Path targetDir) throws Exception {
+    private void writeWorkerConfig(Path configFile) throws Exception {
+        StringBuilder json = new StringBuilder("{\"module_dirs\": [");
+        for (int i = 0; i < moduleDirs.size(); i++) {
+            if (i > 0) {
+                json.append(", ");
+            }
+            json.append('"').append(moduleDirs.get(i).toString().replace("\\", "\\\\").replace("\"", "\\\""))
+                    .append('"');
+        }
+        json.append("]}\n");
+        Files.writeString(configFile, json.toString());
+    }
+
+    private static boolean isInstalled(Path markerFile, String requirementsHash) throws Exception {
+        return Files.exists(markerFile) && Files.readString(markerFile).trim().equals(requirementsHash);
+    }
+
+    private static String sha256Hex(byte[] data) throws Exception {
+        return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(data));
+    }
+
+    private void setupWindowsEmbeddedPython(Path targetDir, String requirementsHash) throws Exception {
         Path pythonDistDir = targetDir.resolve("python_dist");
         Path markerFile = pythonDistDir.resolve(".installed");
+        Path pyExe = pythonDistDir.resolve("python.exe");
 
         if (!Files.exists(markerFile)) {
-            Path sitePackages = pythonDistDir.resolve("Lib/site-packages");
-            if (Files.exists(pythonDistDir.resolve("python.exe")) &&
-                    (Files.exists(sitePackages.resolve("ultralytics"))
-                            || Files.exists(sitePackages.resolve("torch")))) {
-                Files.createFile(markerFile);
-                this.pythonExe = pythonDistDir.resolve("python.exe");
-                return;
-            }
-
             Path downloads = targetDir.resolve("downloads");
             Path pythonZip = download(EMBEDDED_PYTHON_URL, EMBEDDED_PYTHON_SHA256,
                     downloads.resolve("python-3.11.9-embed-amd64.zip"));
             NativeLoader.extractZip(pythonZip, pythonDistDir);
             Files.write(pythonDistDir.resolve("python311._pth"), "python311.zip\n.\nimport site".getBytes());
 
-            Path pyExe = pythonDistDir.resolve("python.exe");
             Path pipWheel = download(PIP_WHEEL_URL, PIP_WHEEL_SHA256, downloads.resolve("pip-24.0-py3-none-any.whl"));
             NativeLoader.extractZip(pipWheel, pythonDistDir.resolve("Lib/site-packages"));
             runOrFail("Failed to pre-install setuptools/wheel in " + pythonDistDir, targetDir,
                     pyExe.toString(), "-m", "pip", "install", "setuptools<70", "wheel");
+        }
+
+        if (!isInstalled(markerFile, requirementsHash)) {
             runOrFail("pip install failed for requirements.txt in " + pythonDistDir, targetDir,
                     pyExe.toString(), "-m", "pip", "install", "--no-build-isolation",
                     "-r", targetDir.resolve("requirements.txt").toString());
-            Files.createFile(markerFile);
+            Files.writeString(markerFile, requirementsHash);
         }
 
-        this.pythonExe = pythonDistDir.resolve("python.exe");
+        this.pythonExe = pyExe;
     }
 
     private Path download(String url, String expectedSha256, Path target) throws Exception {
@@ -155,8 +199,7 @@ public class JPyRustBridge {
             Files.deleteIfExists(target);
             throw new RuntimeException("Download failed (HTTP " + response.statusCode() + "): " + url);
         }
-        MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        String actual = HexFormat.of().formatHex(digest.digest(Files.readAllBytes(target)));
+        String actual = sha256Hex(Files.readAllBytes(target));
         if (!actual.equals(expectedSha256)) {
             Files.deleteIfExists(target);
             throw new RuntimeException("Checksum mismatch for " + url + ": expected " + expectedSha256 + ", got " + actual);
@@ -175,7 +218,7 @@ public class JPyRustBridge {
         }
     }
 
-    private void setupSystemVenvPython(Path targetDir) throws Exception {
+    private void setupSystemVenvPython(Path targetDir, String requirementsHash) throws Exception {
         Path markerFile = targetDir.resolve(".installed");
         Path venvDir = targetDir.resolve("venv");
         Path venvPython = venvDir.resolve("bin/python3");
@@ -208,7 +251,9 @@ public class JPyRustBridge {
             if (setuptoolsProc.waitFor() != 0) {
                 throw new RuntimeException("Failed to pre-install setuptools/wheel in " + venvDir);
             }
+        }
 
+        if (!isInstalled(markerFile, requirementsHash)) {
             ProcessBuilder pipPb = new ProcessBuilder(
                     venvPython.toString(), "-m", "pip", "install", "--no-build-isolation",
                     "-r", requirements.toString());
@@ -220,7 +265,7 @@ public class JPyRustBridge {
                 throw new RuntimeException("pip install failed for requirements.txt in " + venvDir);
             }
 
-            Files.createFile(markerFile);
+            Files.writeString(markerFile, requirementsHash);
         }
 
         this.pythonExe = venvPython;
@@ -276,6 +321,22 @@ public class JPyRustBridge {
     public String sendTask(String taskType, String metadata) {
         String requestId = java.util.UUID.randomUUID().toString();
         byte[] result = invokeTask(taskType, requestId, metadata, ByteBuffer.allocateDirect(1), 0);
+        return new String(result, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    public byte[] call(String taskName, byte[] input, String args) {
+        if (args.contains("\n") || args.contains("\r")) {
+            throw new IllegalArgumentException("args must not contain line breaks");
+        }
+        ByteBuffer buffer = ByteBuffer.allocateDirect(Math.max(input.length, 1));
+        buffer.put(input);
+        buffer.flip();
+        String requestId = java.util.UUID.randomUUID().toString();
+        return invokeTask(taskName, requestId, args, buffer, input.length);
+    }
+
+    public String call(String taskName, String input) {
+        byte[] result = call(taskName, input.getBytes(java.nio.charset.StandardCharsets.UTF_8), "");
         return new String(result, java.nio.charset.StandardCharsets.UTF_8);
     }
 

@@ -1,6 +1,9 @@
 # Changelog
 
 * **Unreleased**
+    * **Feature:** Call your own Python code. `@task` (from the new `jpyrust` module) registers a Python function, `moduleDir(Path)` points the daemon at your modules, `requirements(Path)` replaces the bundled dependency list, and `call(task, bytes, args)` / `call(task, text)` invoke it. Results are returned as bytes, UTF-8 text or JSON.
+    * **Behavior Change:** The `.installed` marker now stores the SHA-256 of `requirements.txt`, and a mismatch re-runs `pip install`. Existing installs run `pip install` once more on the next `initialize()` (fast when nothing changed).
+    * **Fix:** The Python worker starts without `numpy`/`opencv` installed; only the built-in tasks that need them fail.
     * **Behavior Change:** Windows no longer bundles a ~400 MB embedded Python in the JAR. The first `initialize()` downloads python.org's embeddable Python 3.11.9 and a pinned `pip` wheel (both SHA-256 verified) and installs `requirements.txt` from PyPI, so the first run needs network access. Whisper now works on Windows too. The JAR shrinks to under 1 MB, and JitPack and GitHub Release JARs now behave the same on Windows (previously the JitPack JAR had no Python bundle at all).
     * **Fix:** Windows dependency install failures are no longer silently ignored — `initialize()` throws if pip fails.
     * **Behavior Change:** `processImage`, `processAudio` and the new `sendTask` throw `RuntimeException` on failure instead of returning `null`; calling them before `initialize()` or after `close()` throws `IllegalStateException`. `initialize()` now throws if the Python daemon fails to start (previously it only logged and left the bridge half-initialized). See *Errors & Timeouts* in the [README](README.md).

@@ -46,7 +46,7 @@ val stageCommonPythonResources = tasks.register<Copy>("stageCommonPythonResource
     group = "python"
     description = "Copies ai_worker.py and requirements.txt as plain resources for the Python bootstrap"
 
-    from(pythonCoreDir) { include("ai_worker.py") }
+    from(pythonCoreDir) { include("ai_worker.py", "jpyrust.py") }
     from(requirementsFile.parentFile) { include("requirements.txt") }
     into(generatedResourcesDir.map { it.dir("common") })
 }
@@ -57,6 +57,6 @@ tasks.named<ProcessResources>("processResources") {
     exclude("python_dist/**")
 
     from(stageCommonPythonResources.map { it.destinationDir }) {
-        include("ai_worker.py", "requirements.txt")
+        include("ai_worker.py", "jpyrust.py", "requirements.txt")
     }
 }
