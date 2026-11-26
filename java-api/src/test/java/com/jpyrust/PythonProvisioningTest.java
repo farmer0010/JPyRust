@@ -3,6 +3,7 @@ package com.jpyrust;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Locale;
@@ -36,5 +37,24 @@ public class PythonProvisioningTest {
                 .inheritIO()
                 .start();
         assertEquals(0, imports.waitFor());
+    }
+
+    @Test
+    public void userModuleRunsWithUserRequirements(@TempDir(cleanup = CleanupMode.NEVER) Path dir) throws Exception {
+        Path requirements = Files.writeString(dir.resolve("requirements.txt"), "");
+        Path modules = Files.createDirectories(dir.resolve("tasks"));
+        Files.writeString(modules.resolve("echo_tasks.py"),
+                "from jpyrust import task\n\n\n@task(\"ECHO\")\ndef echo(data, args):\n"
+                        + "    return {\"text\": data.decode(\"utf-8\"), \"args\": args}\n");
+
+        JPyRustBridge bridge = new JPyRustBridge("provision_user_module").requirements(requirements).moduleDir(modules);
+        try {
+            bridge.initialize(dir.resolve("work").toString());
+            String echoed = new String(bridge.call("ECHO", "안녕".getBytes(StandardCharsets.UTF_8), "x y"),
+                    StandardCharsets.UTF_8);
+            assertEquals("{\"text\": \"\uc548\ub155\", \"args\": \"x y\"}", echoed);
+        } finally {
+            bridge.close();
+        }
     }
 }

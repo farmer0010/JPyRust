@@ -1,9 +1,11 @@
 package com.jpyrust;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.nio.ByteBuffer;
+import java.nio.file.Paths;
 import org.junit.jupiter.api.Test;
 
 public class JPyRustBridgeLifecycleTest {
@@ -34,5 +36,23 @@ public class JPyRustBridgeLifecycleTest {
         bridge.close();
         ByteBuffer buffer = ByteBuffer.allocateDirect(4);
         assertThrows(IllegalStateException.class, () -> bridge.processImage(buffer, 4, 1, 1, 3));
+    }
+
+    @Test
+    public void callBeforeInitializeThrows() {
+        JPyRustBridge bridge = new JPyRustBridge("lifecycle_test");
+        assertThrows(IllegalStateException.class, () -> bridge.call("ECHO", "hi"));
+    }
+
+    @Test
+    public void callRejectsArgsWithLineBreaks() {
+        JPyRustBridge bridge = new JPyRustBridge("lifecycle_test");
+        assertThrows(IllegalArgumentException.class, () -> bridge.call("ECHO", new byte[0], "a\nEXIT"));
+    }
+
+    @Test
+    public void configurationMethodsReturnTheBridge() {
+        JPyRustBridge bridge = new JPyRustBridge("lifecycle_test");
+        assertSame(bridge, bridge.requirements(Paths.get("requirements.txt")).moduleDir(Paths.get("tasks")));
     }
 }
