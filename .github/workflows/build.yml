@@ -55,12 +55,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Setup MSVC (Windows)
-      if: runner.os == 'Windows'
-      uses: ilammy/msvc-dev-cmd@v1
-      with:
-        arch: x64
-
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
       with:
