@@ -10,10 +10,53 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
+const INITIAL_SHM_SIZE: usize = 1024 * 1024;
+const MAX_SHM_SIZE: usize = 256 * 1024 * 1024;
+const INPUT_SHM_UNAVAILABLE: &str = "Input SHMEM read failed";
 
-const OUTPUT_SHM_SIZE: usize = 1024 * 1024;
-const READY_TIMEOUT: Duration = Duration::from_secs(600);
-const TASK_TIMEOUT: Duration = Duration::from_secs(300);
+const BASE_EXCEPTION: &str = "com/jpyrust/JPyRustException";
+const TASK_FAILED: &str = "com/jpyrust/TaskFailedException";
+const WORKER_TIMEOUT: &str = "com/jpyrust/WorkerTimeoutException";
+const WORKER_CRASHED: &str = "com/jpyrust/WorkerCrashedException";
+
+#[cfg(target_os = "windows")]
+type Shm = CustomShmem;
+#[cfg(not(target_os = "windows"))]
+type Shm = shared_memory::Shmem;
+
+struct Failure {
+    class: &'static str,
+    message: String,
+}
+
+impl From<String> for Failure {
+    fn from(message: String) -> Self {
+        Failure { class: BASE_EXCEPTION, message }
+    }
+}
+
+impl From<&str> for Failure {
+    fn from(message: &str) -> Self {
+        Failure::from(message.to_string())
+    }
+}
+
+#[derive(Debug)]
+enum DaemonError {
+    Task(String),
+    Timeout(String),
+    Broken(String),
+}
+
+impl DaemonError {
+    fn into_failure(self) -> Failure {
+        match self {
+            DaemonError::Task(message) => Failure { class: TASK_FAILED, message },
+            DaemonError::Timeout(message) => Failure { class: WORKER_TIMEOUT, message },
+            DaemonError::Broken(message) => Failure { class: WORKER_CRASHED, message },
+        }
+    }
+}
 
 struct PythonDaemon {
     child: Child,
@@ -22,7 +65,7 @@ struct PythonDaemon {
 }
 
 impl PythonDaemon {
-    fn wait_for_line<F: Fn(&str) -> bool>(&self, timeout: Duration, accept: F) -> Result<String, String> {
+    fn wait_for_line<F: Fn(&str) -> bool>(&self, timeout: Duration, accept: F) -> Result<String, DaemonError> {
         let deadline = Instant::now() + timeout;
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
@@ -30,9 +73,12 @@ impl PythonDaemon {
                 Ok(line) if accept(&line) => return Ok(line),
                 Ok(_) => {}
                 Err(RecvTimeoutError::Timeout) => {
-                    return Err(format!("Timed out after {}s waiting for Python daemon", timeout.as_secs()))
+                    return Err(DaemonError::Timeout(format!(
+                        "Timed out after {}s waiting for Python daemon",
+                        timeout.as_secs_f64()
+                    )))
                 }
-                Err(RecvTimeoutError::Disconnected) => return Err("Python daemon closed".to_string()),
+                Err(RecvTimeoutError::Disconnected) => return Err(DaemonError::Broken("Python daemon closed".to_string())),
             }
         }
     }
@@ -45,8 +91,24 @@ impl Drop for PythonDaemon {
     }
 }
 
+struct SharedBuffer {
+    name: String,
+    shm: Shm,
+    capacity: usize,
+}
+
+#[derive(Default)]
+struct Session {
+    daemon: Option<PythonDaemon>,
+    input: Option<SharedBuffer>,
+    output: Option<SharedBuffer>,
+    wanted_output: usize,
+    generation: u32,
+    shm_disabled: bool,
+}
+
 struct BridgeState {
-    daemon: Mutex<Option<PythonDaemon>>,
+    session: Mutex<Session>,
     work_dir: String,
     session_key: String,
     instance_id: String,
@@ -55,6 +117,8 @@ struct BridgeState {
     model_path: String,
     confidence: f32,
     whisper_model_path: String,
+    startup_timeout: Duration,
+    task_timeout: Duration,
 }
 
 impl BridgeState {
@@ -119,7 +183,7 @@ impl BridgeState {
         "python3".to_string()
     }
 
-    fn spawn_python_daemon(&self) -> Result<PythonDaemon, String> {
+    fn spawn_python_daemon(&self) -> Result<PythonDaemon, Failure> {
         let python_exe = self.find_python_executable();
         let script_path = format!("{}/ai_worker.py", self.work_dir);
 
@@ -172,42 +236,41 @@ impl BridgeState {
         };
 
         daemon
-            .wait_for_line(READY_TIMEOUT, |line| line == "READY")
-            .map_err(|e| format!("Python daemon did not become READY: {}", e))?;
+            .wait_for_line(self.startup_timeout, |line| line == "READY")
+            .map_err(|e| match e {
+                DaemonError::Timeout(msg) => Failure { class: WORKER_TIMEOUT, message: format!("Python daemon did not become READY: {}", msg) },
+                DaemonError::Task(msg) | DaemonError::Broken(msg) => Failure { class: WORKER_CRASHED, message: format!("Python daemon did not become READY: {}", msg) },
+            })?;
 
         Ok(daemon)
     }
 
-    fn lock_daemon(&self) -> MutexGuard<'_, Option<PythonDaemon>> {
-        self.daemon.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    fn lock_session(&self) -> MutexGuard<'_, Session> {
+        self.session.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    fn ensure_daemon(&self, guard: &mut Option<PythonDaemon>) -> Result<(), String> {
-        if let Some(daemon) = guard.as_mut() {
+    fn ensure_daemon(&self, session: &mut Session) -> Result<(), Failure> {
+        if let Some(daemon) = session.daemon.as_mut() {
             if let Ok(None) = daemon.child.try_wait() {
                 return Ok(());
             }
         }
-        *guard = Some(self.spawn_python_daemon()?);
+        session.daemon = Some(self.spawn_python_daemon()?);
         Ok(())
     }
 
-    fn start_daemon(&self) -> Result<(), String> {
-        let mut guard = self.lock_daemon();
-        self.ensure_daemon(&mut guard)
+    fn start_daemon(&self) -> Result<(), Failure> {
+        let mut session = self.lock_session();
+        self.ensure_daemon(&mut session)
     }
 
-    fn execute(&self, task_type: &str, request_id: &str, metadata: &str) -> Result<String, String> {
-        let mut guard = self.lock_daemon();
-        self.ensure_daemon(&mut guard)?;
-
-        let result = Self::send_execute_command(guard.as_mut().unwrap(), task_type, request_id, metadata);
-        if let Err(DaemonError::Broken(_)) = &result {
-            *guard = None;
+    fn send(&self, session: &mut Session, task_type: &str, request_id: &str, metadata: &str) -> Result<String, DaemonError> {
+        self.ensure_daemon(session).map_err(|f| DaemonError::Broken(f.message))?;
+        let result = Self::send_execute_command(session.daemon.as_mut().unwrap(), task_type, request_id, metadata, self.task_timeout);
+        if matches!(result, Err(DaemonError::Broken(_)) | Err(DaemonError::Timeout(_))) {
+            session.daemon = None;
         }
-        result.map_err(|e| match e {
-            DaemonError::Task(msg) | DaemonError::Broken(msg) => msg,
-        })
+        result
     }
 
     fn send_execute_command(
@@ -215,25 +278,150 @@ impl BridgeState {
         task_type: &str,
         request_id: &str,
         metadata: &str,
+        timeout: Duration,
     ) -> Result<String, DaemonError> {
         let command = format!("EXECUTE {} {} {}\n", task_type, request_id, metadata);
         daemon.stdin.write_all(command.as_bytes()).map_err(|e| DaemonError::Broken(e.to_string()))?;
         daemon.stdin.flush().map_err(|e| DaemonError::Broken(e.to_string()))?;
 
         let response = daemon
-            .wait_for_line(TASK_TIMEOUT, |line| line.starts_with("DONE") || line.starts_with("ERROR"))
-            .map_err(|e| DaemonError::Broken(format!("{} (task {}, restarting daemon)", e, task_type)))?;
+            .wait_for_line(timeout, |line| line.starts_with("DONE") || line.starts_with("ERROR"))
+            .map_err(|e| match e {
+                DaemonError::Timeout(msg) => DaemonError::Timeout(format!("{} (task {}, restarting daemon)", msg, task_type)),
+                DaemonError::Broken(msg) => DaemonError::Broken(format!("{} (task {}, restarting daemon)", msg, task_type)),
+                other => other,
+            })?;
 
         if response.starts_with("ERROR") {
             return Err(DaemonError::Task(response));
         }
         Ok(response)
     }
+
+    fn execute_task(&self, task_type: &str, request_id: &str, metadata: &str, data: &[u8]) -> Result<Vec<u8>, Failure> {
+        let mut session = self.lock_session();
+        if !session.shm_disabled {
+            match self.execute_shm(&mut session, task_type, request_id, metadata, data) {
+                Ok(output) => return Ok(output),
+                Err(ShmFailure::Unavailable(reason)) => {
+                    self.log_to_java("WARN", &format!("[IPC] Shared memory unavailable ({}), using files", reason));
+                    session.shm_disabled = true;
+                }
+                Err(ShmFailure::Daemon(e)) => return Err(e.into_failure()),
+                Err(ShmFailure::Other(msg)) => return Err(msg.into()),
+            }
+        }
+        self.execute_file(&mut session, task_type, request_id, metadata, data)
+    }
+
+    fn reserve(&self, session: &mut Session, input: bool, needed: usize) -> Result<(), String> {
+        let current = if input { &session.input } else { &session.output };
+        if current.as_ref().is_some_and(|b| b.capacity >= needed) {
+            return Ok(());
+        }
+        let capacity = needed.max(INITIAL_SHM_SIZE).next_power_of_two();
+        session.generation += 1;
+        let name = format!("{}_{}{}", self.session_key, if input { "i" } else { "o" }, session.generation);
+        let shm = create_shmem_permissive(&name, capacity)?;
+        let buffer = Some(SharedBuffer { name, shm, capacity });
+        if input {
+            session.input = buffer;
+        } else {
+            session.output = buffer;
+        }
+        Ok(())
+    }
+
+    fn execute_shm(
+        &self,
+        session: &mut Session,
+        task_type: &str,
+        request_id: &str,
+        metadata: &str,
+        data: &[u8],
+    ) -> Result<Vec<u8>, ShmFailure> {
+        if data.len() > MAX_SHM_SIZE {
+            return Err(ShmFailure::Unavailable(format!("input of {} bytes exceeds {} bytes", data.len(), MAX_SHM_SIZE)));
+        }
+        self.reserve(session, true, data.len().max(1)).map_err(ShmFailure::Unavailable)?;
+        let wanted = session.wanted_output.max(INITIAL_SHM_SIZE);
+        self.reserve(session, false, wanted).map_err(ShmFailure::Unavailable)?;
+
+        let input = session.input.as_mut().unwrap();
+        unsafe { input.shm.as_slice_mut()[..data.len()].copy_from_slice(data) };
+        let output = session.output.as_ref().unwrap();
+        let shm_metadata = format!(
+            "SHMEM {} {} {} {} {}",
+            input.name,
+            data.len(),
+            output.name,
+            output.capacity,
+            metadata
+        );
+        let output_capacity = output.capacity;
+
+        let response = match self.send(session, task_type, request_id, &shm_metadata) {
+            Ok(response) => response,
+            Err(DaemonError::Task(msg)) if msg.contains(INPUT_SHM_UNAVAILABLE) => return Err(ShmFailure::Unavailable(msg)),
+            Err(e) => return Err(ShmFailure::Daemon(e)),
+        };
+
+        let (length, via_file) = parse_done(&response).ok_or_else(|| {
+            ShmFailure::Other(format!("Malformed response from Python daemon: {}", response))
+        })?;
+        if via_file {
+            if length > output_capacity && length <= MAX_SHM_SIZE {
+                session.wanted_output = length;
+            }
+            let output_file = format!("{}/output_{}.dat", self.work_dir, request_id);
+            let result = read_data_file(&output_file)
+                .map_err(|e| ShmFailure::Other(format!("Failed to read output file {}: {}", output_file, e)));
+            let _ = std::fs::remove_file(&output_file);
+            return result;
+        }
+        if length > output_capacity {
+            return Err(ShmFailure::Other(format!(
+                "Output size {} bytes exceeds shared memory capacity {} bytes",
+                length, output_capacity
+            )));
+        }
+        Ok(unsafe { session.output.as_ref().unwrap().shm.as_slice()[..length].to_vec() })
+    }
+
+    fn execute_file(
+        &self,
+        session: &mut Session,
+        task_type: &str,
+        request_id: &str,
+        metadata: &str,
+        data: &[u8],
+    ) -> Result<Vec<u8>, Failure> {
+        let input_file = format!("{}/input_{}.dat", self.work_dir, request_id);
+        let output_file = format!("{}/output_{}.dat", self.work_dir, request_id);
+
+        let result = write_data_file(&input_file, data)
+            .map_err(|e| Failure::from(format!("Failed to write input file {}: {}", input_file, e)))
+            .and_then(|_| self.send(session, task_type, request_id, metadata).map_err(DaemonError::into_failure))
+            .and_then(|_| {
+                read_data_file(&output_file)
+                    .map_err(|e| Failure::from(format!("Failed to read output file {}: {}", output_file, e)))
+            });
+
+        cleanup_files(&input_file, &output_file);
+        result
+    }
 }
 
-enum DaemonError {
-    Task(String),
-    Broken(String),
+enum ShmFailure {
+    Unavailable(String),
+    Daemon(DaemonError),
+    Other(String),
+}
+
+fn parse_done(response: &str) -> Option<(usize, bool)> {
+    let mut parts = response.strip_prefix("DONE ")?.split_whitespace();
+    let length = parts.next()?.parse().ok()?;
+    Some((length, parts.next() == Some("FILE")))
 }
 
 fn jerr(e: jni::errors::Error) -> String {
@@ -252,32 +440,38 @@ fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
 
 fn run_jni<'local, T, F>(env: &mut JNIEnv<'local>, default: T, f: F) -> T
 where
-    F: FnOnce(&mut JNIEnv<'local>) -> Result<T, String>,
+    F: FnOnce(&mut JNIEnv<'local>) -> Result<T, Failure>,
 {
-    let message = match catch_unwind(AssertUnwindSafe(|| f(env))) {
+    let failure = match catch_unwind(AssertUnwindSafe(|| f(env))) {
         Ok(Ok(value)) => return value,
-        Ok(Err(msg)) => msg,
-        Err(payload) => panic_message(payload),
+        Ok(Err(failure)) => failure,
+        Err(payload) => Failure::from(panic_message(payload)),
     };
-    if !env.exception_check().unwrap_or(false) {
-        let _ = env.throw_new("java/lang/RuntimeException", message);
+    if !env.exception_check().unwrap_or(false) && env.throw_new(failure.class, &failure.message).is_err() {
+        let _ = env.exception_clear();
+        let _ = env.throw_new("java/lang/RuntimeException", failure.message);
     }
     default
 }
 
-fn get_state<'a>(env: &mut JNIEnv, obj: &JObject) -> Result<&'a BridgeState, String> {
+fn get_state<'a>(env: &mut JNIEnv, obj: &JObject) -> Result<&'a BridgeState, Failure> {
     let ptr = env.get_field(obj, "nativePtr", "J").map_err(jerr)?.j().map_err(jerr)?;
     if ptr == 0 {
-        return Err("JPyRustBridge is not initialized or already closed".to_string());
+        return Err("JPyRustBridge is not initialized or already closed".into());
     }
     Ok(unsafe { &*(ptr as *const BridgeState) })
 }
 
-fn get_rust_string(env: &mut JNIEnv, s: &JString) -> Result<String, String> {
+fn get_rust_string(env: &mut JNIEnv, s: &JString) -> Result<String, Failure> {
     Ok(env.get_string(s).map_err(jerr)?.into())
 }
 
+fn millis(value: jlong) -> Duration {
+    Duration::from_millis(value.max(1) as u64)
+}
+
 #[no_mangle]
+#[allow(clippy::too_many_arguments)]
 pub extern "system" fn Java_com_jpyrust_JPyRustBridge_initNative<'local>(
     mut env: JNIEnv<'local>,
     obj: JObject<'local>,
@@ -287,6 +481,8 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_initNative<'local>(
     confidence: jni::sys::jfloat,
     memory_key: JString<'local>,
     whisper_model: JString<'local>,
+    startup_timeout_ms: jlong,
+    task_timeout_ms: jlong,
 ) {
     run_jni(&mut env, (), |env| {
         let work_dir_str = get_rust_string(env, &work_dir)?;
@@ -305,7 +501,7 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_initNative<'local>(
         let global_obj = env.new_global_ref(&obj).map_err(jerr)?;
 
         let state = Box::new(BridgeState {
-            daemon: Mutex::new(None),
+            session: Mutex::new(Session::default()),
             work_dir: work_dir_str,
             session_key: memory_key_str,
             instance_id: instance_id_str,
@@ -314,22 +510,25 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_initNative<'local>(
             model_path: model_path_str,
             confidence,
             whisper_model_path: whisper_model_str,
+            startup_timeout: millis(startup_timeout_ms),
+            task_timeout: millis(task_timeout_ms),
         });
 
         if let Err(e) = state.start_daemon() {
-            return Err(format!("Daemon start failed: {}", e));
+            return Err(Failure { class: e.class, message: format!("Daemon start failed: {}", e.message) });
         }
 
         let state_ptr = Box::into_raw(state) as jlong;
         if let Err(e) = env.set_field(&obj, "nativePtr", "J", jni::objects::JValue::Long(state_ptr)) {
             drop(unsafe { Box::from_raw(state_ptr as *mut BridgeState) });
-            return Err(jerr(e));
+            return Err(jerr(e).into());
         }
         Ok(())
     })
 }
 
 #[no_mangle]
+#[allow(clippy::too_many_arguments)]
 pub extern "system" fn Java_com_jpyrust_JPyRustBridge_executeTask<'local>(
     mut env: JNIEnv<'local>,
     obj: JObject<'local>,
@@ -351,93 +550,20 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_executeTask<'local>(
             .get_direct_buffer_capacity(&input_data)
             .map_err(|e| format!("Input must be a direct ByteBuffer ({})", e))?;
         if input_length < 0 || input_length as usize > capacity {
-            return Err(format!("Invalid input length {} for buffer capacity {}", input_length, capacity));
+            return Err(format!("Invalid input length {} for buffer capacity {}", input_length, capacity).into());
         }
         let length = input_length as usize;
-        let buffer_ptr = env.get_direct_buffer_address(&input_data).map_err(jerr)?;
-        let data = unsafe { std::slice::from_raw_parts(buffer_ptr, length) };
+        let data = if length == 0 {
+            &[][..]
+        } else {
+            let buffer_ptr = env.get_direct_buffer_address(&input_data).map_err(jerr)?;
+            unsafe { std::slice::from_raw_parts(buffer_ptr, length) }
+        };
 
-        let output = execute_task(state, &task_type_str, &request_id_str, &metadata_str, data)?;
+        let output = state.execute_task(&task_type_str, &request_id_str, &metadata_str, data)?;
         let array = env.byte_array_from_slice(&output).map_err(jerr)?;
         Ok(array.into_raw())
     })
-}
-
-fn execute_task(
-    state: &BridgeState,
-    task_type: &str,
-    request_id: &str,
-    metadata: &str,
-    data: &[u8],
-) -> Result<Vec<u8>, String> {
-    if !["YOLO", "EDGE_DETECT"].contains(&task_type) {
-        return execute_with_file_fallback(state, task_type, request_id, metadata, data);
-    }
-
-    let short_id = &request_id[..6.min(request_id.len())];
-    let length = data.len();
-
-    let shm_name_in = format!("{}_{}", state.session_key, short_id);
-    let mut shm_in = match create_shmem_permissive(&shm_name_in, length) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("[JPyRust-Native] SHMEM-IN creation failed: {}", e);
-            return execute_with_file_fallback(state, task_type, request_id, metadata, data);
-        }
-    };
-
-    unsafe { shm_in.as_slice_mut()[..length].copy_from_slice(data); }
-
-    let shm_name_out = format!("{}_out_{}", state.session_key, short_id);
-    let shm_out = match create_shmem_permissive(&shm_name_out, OUTPUT_SHM_SIZE) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("[JPyRust-Native] SHMEM-OUT creation failed: {}", e);
-            return execute_with_file_fallback(state, task_type, request_id, metadata, data);
-        }
-    };
-
-    eprintln!("[JPyRust-Native] [IPC] Mode: SHMEM | Task: {} | ReqID: {}", task_type, request_id);
-    state.log_to_java("INFO", &format!("[IPC] Mode: SHMEM | Task: {} | ReqID: {}", task_type, short_id));
-    let shmem_metadata = format!("SHMEM {} {} {} {} {}", shm_name_in, length, shm_name_out, OUTPUT_SHM_SIZE, metadata);
-
-    let response = state.execute(task_type, request_id, &shmem_metadata)?;
-    let result_len: usize = response
-        .strip_prefix("DONE ")
-        .and_then(|len| len.trim().parse().ok())
-        .ok_or_else(|| format!("Malformed response from Python daemon: {}", response))?;
-
-    if result_len > OUTPUT_SHM_SIZE {
-        return Err(format!(
-            "Output size {} bytes exceeds shared memory capacity {} bytes",
-            result_len, OUTPUT_SHM_SIZE
-        ));
-    }
-
-    Ok(unsafe { shm_out.as_slice()[..result_len].to_vec() })
-}
-
-fn execute_with_file_fallback(
-    state: &BridgeState,
-    task_type: &str,
-    request_id: &str,
-    metadata: &str,
-    data: &[u8],
-) -> Result<Vec<u8>, String> {
-    eprintln!("[JPyRust-Native] [IPC] Mode: FILE-FALLBACK | Task: {} | ReqID: {}", task_type, request_id);
-    state.log_to_java("WARN", &format!("[IPC] Mode: FILE-FALLBACK | Task: {} | ReqID: {}", task_type, &request_id[..8.min(request_id.len())]));
-    let input_file = format!("{}/input_{}.dat", state.work_dir, request_id);
-    let output_file = format!("{}/output_{}.dat", state.work_dir, request_id);
-
-    let result = write_data_file(&input_file, data)
-        .map_err(|e| format!("Failed to write input file {}: {}", input_file, e))
-        .and_then(|_| state.execute(task_type, request_id, metadata))
-        .and_then(|_| {
-            read_data_file(&output_file).map_err(|e| format!("Failed to read output file {}: {}", output_file, e))
-        });
-
-    cleanup_files(&input_file, &output_file);
-    result
 }
 
 #[no_mangle]
@@ -655,8 +781,10 @@ mod tests {
     fn wait_for_line_times_out_on_silent_daemon() {
         let daemon = spawn_fake_daemon("sleep 5");
         let started = Instant::now();
-        let err = daemon.wait_for_line(Duration::from_millis(200), |_| true).unwrap_err();
-        assert!(err.contains("Timed out"));
+        match daemon.wait_for_line(Duration::from_millis(200), |_| true) {
+            Err(DaemonError::Timeout(msg)) => assert!(msg.contains("Timed out")),
+            other => panic!("expected timeout, got {:?}", other),
+        }
         assert!(started.elapsed() < Duration::from_secs(2));
     }
 
@@ -664,15 +792,17 @@ mod tests {
     #[test]
     fn wait_for_line_reports_closed_daemon() {
         let daemon = spawn_fake_daemon("exit 0");
-        let err = daemon.wait_for_line(Duration::from_secs(5), |_| true).unwrap_err();
-        assert_eq!(err, "Python daemon closed");
+        match daemon.wait_for_line(Duration::from_secs(5), |_| true) {
+            Err(DaemonError::Broken(msg)) => assert_eq!(msg, "Python daemon closed"),
+            other => panic!("expected closed daemon, got {:?}", other),
+        }
     }
 
     #[cfg(unix)]
     #[test]
     fn python_error_is_a_task_error() {
         let mut daemon = spawn_fake_daemon("read _; echo 'ERROR boom'; sleep 5");
-        match BridgeState::send_execute_command(&mut daemon, "YOLO", "req", "meta") {
+        match BridgeState::send_execute_command(&mut daemon, "YOLO", "req", "meta", Duration::from_secs(5)) {
             Err(DaemonError::Task(msg)) => assert_eq!(msg, "ERROR boom"),
             _ => panic!("expected task error"),
         }
@@ -682,9 +812,27 @@ mod tests {
     #[test]
     fn closed_daemon_is_a_broken_error() {
         let mut daemon = spawn_fake_daemon("read _; exit 0");
-        match BridgeState::send_execute_command(&mut daemon, "YOLO", "req", "meta") {
+        match BridgeState::send_execute_command(&mut daemon, "YOLO", "req", "meta", Duration::from_secs(5)) {
             Err(DaemonError::Broken(msg)) => assert!(msg.contains("Python daemon closed")),
             _ => panic!("expected broken daemon"),
+        }
+    }
+
+    #[test]
+    fn done_response_reports_length_and_file_fallback() {
+        assert_eq!(parse_done("DONE 42"), Some((42, false)));
+        assert_eq!(parse_done("DONE 2000000 FILE"), Some((2000000, true)));
+        assert_eq!(parse_done("DONE x"), None);
+        assert_eq!(parse_done("ERROR boom"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn silent_task_is_a_timeout_error() {
+        let mut daemon = spawn_fake_daemon("read _; sleep 5");
+        match BridgeState::send_execute_command(&mut daemon, "YOLO", "req", "meta", Duration::from_millis(200)) {
+            Err(DaemonError::Timeout(msg)) => assert!(msg.contains("restarting daemon")),
+            other => panic!("expected timeout, got {:?}", other),
         }
     }
 
@@ -692,7 +840,7 @@ mod tests {
     #[test]
     fn done_response_is_returned() {
         let mut daemon = spawn_fake_daemon("read _; echo 'progress'; echo 'DONE 42'; sleep 5");
-        match BridgeState::send_execute_command(&mut daemon, "YOLO", "req", "meta") {
+        match BridgeState::send_execute_command(&mut daemon, "YOLO", "req", "meta", Duration::from_secs(5)) {
             Ok(line) => assert_eq!(line, "DONE 42"),
             _ => panic!("expected DONE"),
         }

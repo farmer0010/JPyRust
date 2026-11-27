@@ -22,6 +22,11 @@ import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class JPyRustBridge implements AutoCloseable {
@@ -50,6 +55,15 @@ public class JPyRustBridge implements AutoCloseable {
     private Path pythonInterpreter;
     private final List<Path> moduleDirs = new ArrayList<>();
     private final List<String> extras = new ArrayList<>();
+    private String modelPath = "yolov8n.pt";
+    private float confidence = 0.5f;
+    private String whisperModelPath = "";
+    private Duration startupTimeout = Duration.ofSeconds(600);
+    private Duration taskTimeout = Duration.ofSeconds(300);
+    private int workerCount = 1;
+    private final List<JPyRustBridge> extraWorkers = new ArrayList<>();
+    private BlockingQueue<JPyRustBridge> idleWorkers;
+    private ExecutorService asyncExecutor;
     private final ReentrantReadWriteLock lifecycleLock = new ReentrantReadWriteLock();
 
     public JPyRustBridge(String instanceId) {
@@ -57,33 +71,25 @@ public class JPyRustBridge implements AutoCloseable {
     }
 
     public synchronized JPyRustBridge requirements(Path file) {
-        if (initialized) {
-            throw new IllegalStateException("requirements() must be called before initialize()");
-        }
+        requireNotInitialized("requirements");
         this.requirementsFile = file;
         return this;
     }
 
     public synchronized JPyRustBridge moduleDir(Path dir) {
-        if (initialized) {
-            throw new IllegalStateException("moduleDir() must be called before initialize()");
-        }
+        requireNotInitialized("moduleDir");
         moduleDirs.add(dir.toAbsolutePath().normalize());
         return this;
     }
 
     public synchronized JPyRustBridge python(Path interpreter) {
-        if (initialized) {
-            throw new IllegalStateException("python() must be called before initialize()");
-        }
+        requireNotInitialized("python");
         this.pythonInterpreter = interpreter;
         return this;
     }
 
     public synchronized JPyRustBridge extras(String... names) {
-        if (initialized) {
-            throw new IllegalStateException("extras() must be called before initialize()");
-        }
+        requireNotInitialized("extras");
         for (String name : names) {
             if (!AVAILABLE_EXTRAS.contains(name)) {
                 throw new IllegalArgumentException("Unknown extra: " + name + " (available: " + AVAILABLE_EXTRAS + ")");
@@ -95,6 +101,48 @@ public class JPyRustBridge implements AutoCloseable {
         return this;
     }
 
+    public synchronized JPyRustBridge model(String path, float confidence) {
+        requireNotInitialized("model");
+        this.modelPath = path;
+        this.confidence = confidence;
+        return this;
+    }
+
+    public synchronized JPyRustBridge whisperModel(String path) {
+        requireNotInitialized("whisperModel");
+        this.whisperModelPath = path;
+        return this;
+    }
+
+    public synchronized JPyRustBridge timeouts(Duration startup, Duration task) {
+        requireNotInitialized("timeouts");
+        if (startup.isNegative() || startup.isZero() || task.isNegative() || task.isZero()) {
+            throw new IllegalArgumentException("Timeouts must be positive");
+        }
+        this.startupTimeout = startup;
+        this.taskTimeout = task;
+        return this;
+    }
+
+    public synchronized JPyRustBridge workers(int count) {
+        requireNotInitialized("workers");
+        if (count < 1) {
+            throw new IllegalArgumentException("workers must be at least 1");
+        }
+        this.workerCount = count;
+        return this;
+    }
+
+    private void requireNotInitialized(String method) {
+        if (initialized) {
+            throw new IllegalStateException(method + "() must be called before initialize()");
+        }
+    }
+
+    private static String newMemoryKey() {
+        return "JR" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 10);
+    }
+
     public synchronized void initialize() {
         String userHome = System.getProperty("user.home");
         Path defaultWorkDir = Paths.get(userHome, ".jpyrust", instanceId);
@@ -102,16 +150,15 @@ public class JPyRustBridge implements AutoCloseable {
     }
 
     public synchronized void initialize(String workDirectory) {
-        initialize(workDirectory, "yolov8n.pt", 0.5f);
+        initialize(workDirectory, modelPath, confidence);
     }
 
     public synchronized void initialize(String workDirectory, String modelPath, float confidence) {
-        String memoryKey = "JR" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 10);
-        initialize(workDirectory, modelPath, confidence, memoryKey);
+        initialize(workDirectory, modelPath, confidence, newMemoryKey());
     }
 
     public synchronized void initialize(String workDirectory, String modelPath, float confidence, String memoryKey) {
-        initialize(workDirectory, modelPath, confidence, memoryKey, "");
+        initialize(workDirectory, modelPath, confidence, memoryKey, whisperModelPath);
     }
 
     public synchronized void initialize(String workDirectory, String modelPath, float confidence, String memoryKey,
@@ -132,14 +179,28 @@ public class JPyRustBridge implements AutoCloseable {
 
             lifecycleLock.writeLock().lock();
             try {
-                initNative(workDir, workDir, modelPath, confidence, memoryKey, whisperModelPath);
+                long startupMs = startupTimeout.toMillis();
+                long taskMs = taskTimeout.toMillis();
+                initNative(workDir, workDir, modelPath, confidence, memoryKey, whisperModelPath, startupMs, taskMs);
+                idleWorkers = new ArrayBlockingQueue<>(workerCount);
+                idleWorkers.add(this);
+                for (int i = 1; i < workerCount; i++) {
+                    JPyRustBridge worker = new JPyRustBridge(instanceId);
+                    worker.initNative(workDir, workDir, modelPath, confidence, newMemoryKey(), whisperModelPath,
+                            startupMs, taskMs);
+                    extraWorkers.add(worker);
+                    idleWorkers.add(worker);
+                }
                 initialized = true;
+            } catch (RuntimeException e) {
+                closeWorkers();
+                throw e;
             } finally {
                 lifecycleLock.writeLock().unlock();
             }
 
         } catch (Exception e) {
-            throw new RuntimeException("Failed to initialize JPyRustBridge", e);
+            throw new JPyRustException("Failed to initialize JPyRustBridge", e);
         }
     }
 
@@ -344,7 +405,7 @@ public class JPyRustBridge implements AutoCloseable {
     }
 
     private native void initNative(String workDir, String sourceScriptDir, String modelPath, float confidence,
-            String memoryKey, String whisperModelPath);
+            String memoryKey, String whisperModelPath, long startupTimeoutMs, long taskTimeoutMs);
 
     private native void closeNative();
 
@@ -357,10 +418,36 @@ public class JPyRustBridge implements AutoCloseable {
             if (!initialized) {
                 throw new IllegalStateException("JPyRustBridge is not initialized or already closed");
             }
-            return executeTask(workDir, taskType, requestId, metadata, data, length);
+            JPyRustBridge worker = idleWorkers.take();
+            try {
+                return worker.executeTask(workDir, taskType, requestId, metadata, data, length);
+            } finally {
+                idleWorkers.add(worker);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new JPyRustException("Interrupted while waiting for a free Python worker", e);
         } finally {
             lifecycleLock.readLock().unlock();
         }
+    }
+
+    public CompletableFuture<byte[]> callAsync(String taskName, byte[] input, String args) {
+        ExecutorService executor;
+        synchronized (this) {
+            if (!initialized) {
+                throw new IllegalStateException("JPyRustBridge is not initialized or already closed");
+            }
+            if (asyncExecutor == null) {
+                asyncExecutor = Executors.newFixedThreadPool(workerCount, runnable -> {
+                    Thread thread = new Thread(runnable, "jpyrust-" + instanceId + "-async");
+                    thread.setDaemon(true);
+                    return thread;
+                });
+            }
+            executor = asyncExecutor;
+        }
+        return CompletableFuture.supplyAsync(() -> call(taskName, input, args), executor);
     }
 
     public String sendTask(String taskType, String metadata) {
@@ -403,62 +490,15 @@ public class JPyRustBridge implements AutoCloseable {
     }
 
     public byte[] processEdgeDetection(byte[] imageData, int width, int height, int channels) {
-        try {
-            ByteBuffer directBuffer = ByteBuffer.allocateDirect(imageData.length);
-            directBuffer.put(imageData);
-            directBuffer.flip();
-
-            String metadata = width + " " + height + " " + channels;
-            String requestId = java.util.UUID.randomUUID().toString();
-
-            byte[] result = invokeTask("EDGE_DETECT", requestId, metadata, directBuffer,
-                    imageData.length);
-            return result != null ? result : new byte[0];
-        } catch (Exception e) {
-            return null;
-        }
+        return call("EDGE_DETECT", imageData, width + " " + height + " " + channels);
     }
 
     public String processNlp(String text) {
-        try {
-            byte[] textBytes = text.getBytes("UTF-8");
-            ByteBuffer directBuffer = ByteBuffer.allocateDirect(textBytes.length);
-            directBuffer.put(textBytes);
-            directBuffer.flip();
-
-            String requestId = java.util.UUID.randomUUID().toString();
-            String metadata = "TEXT";
-
-            byte[] resultBytes = invokeTask("NLP_TEXTBLOB", requestId, metadata, directBuffer,
-                    textBytes.length);
-
-            if (resultBytes == null)
-                return "{\"error\": \"Native execution failed\"}";
-            return new String(resultBytes, "UTF-8");
-        } catch (Exception e) {
-            return "{\"error\": \"" + e.getMessage() + "\"}";
-        }
+        return call("NLP_TEXTBLOB", text);
     }
 
     public String processRegression(String jsonPoints) {
-        try {
-            byte[] jsonBytes = jsonPoints.getBytes("UTF-8");
-            ByteBuffer directBuffer = ByteBuffer.allocateDirect(jsonBytes.length);
-            directBuffer.put(jsonBytes);
-            directBuffer.flip();
-
-            String requestId = java.util.UUID.randomUUID().toString();
-            String metadata = "JSON";
-
-            byte[] resultBytes = invokeTask("REGRESSION", requestId, metadata, directBuffer,
-                    jsonBytes.length);
-
-            if (resultBytes == null)
-                return "{\"error\": \"Native execution failed\"}";
-            return new String(resultBytes, "UTF-8");
-        } catch (Exception e) {
-            return "{\"error\": \"" + e.getMessage() + "\"}";
-        }
+        return call("REGRESSION", jsonPoints);
     }
 
     public String runPythonRaw(ByteBuffer data, int length, int width, int height, int channels) {
@@ -560,11 +600,23 @@ public class JPyRustBridge implements AutoCloseable {
         lifecycleLock.writeLock().lock();
         try {
             if (initialized) {
-                closeNative();
+                closeWorkers();
                 initialized = false;
             }
         } finally {
             lifecycleLock.writeLock().unlock();
         }
+    }
+
+    private void closeWorkers() {
+        if (asyncExecutor != null) {
+            asyncExecutor.shutdownNow();
+            asyncExecutor = null;
+        }
+        for (JPyRustBridge worker : extraWorkers) {
+            worker.closeNative();
+        }
+        extraWorkers.clear();
+        closeNative();
     }
 }

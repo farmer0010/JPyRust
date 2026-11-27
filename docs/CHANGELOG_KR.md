@@ -1,6 +1,10 @@
 # 변경 이력
 
 * **Unreleased**
+    * **기능:** `workers(n)`으로 브리지 하나 뒤에 Python 프로세스 `n`개를 띄웁니다. 여러 스레드의 호출이 병렬로 돌아서, CPU를 쓰는 Python 코드가 더 이상 GIL 하나에 묶여 줄 서지 않습니다. `callAsync(task, bytes, args)`는 `CompletableFuture`를 돌려줍니다.
+    * **기능:** `timeouts(startup, task)`, `model(path, confidence)`, `whisperModel(path)`로 `initialize()` 전에 설정합니다. 긴 `initialize(...)` 오버로드를 대신하며, 기존 오버로드도 그대로 동작합니다.
+    * **동작 변경:** 실패는 `JPyRustException` 계층으로 옵니다. `TaskFailedException`(Python 작업이 예외를 냄), `WorkerTimeoutException`(타임아웃 초과, 워커 재시작), `WorkerCrashedException`(세그폴트 등으로 워커가 죽음)이며 모두 `RuntimeException`입니다. `processEdgeDetection`, `processNlp`, `processRegression`도 `null`이나 `{"error": ...}` 문자열 대신 다른 호출처럼 예외를 던집니다.
+    * **성능:** `call()`을 포함한 모든 작업이 파일이나 호출마다 만드는 세그먼트 대신, 재사용하며 필요할 때 늘어나는(최대 256MB) 공유 메모리 버퍼로 데이터를 주고받습니다. Apple M5에서 16B 왕복이 0.22ms에서 0.016ms로, 1MB가 0.67ms에서 0.19ms로 줄었습니다(p50). 버퍼에 안 맞는 출력은 파일로 넘어가므로 예전의 1MB 출력 제한이 없어졌습니다. Python 종료 시 "leaked shared_memory" 경고도 더는 나오지 않습니다.
     * **수정:** YOLO의 `bbox` 값이 원본 이미지의 픽셀 좌표로 나옵니다. 폭이 640px보다 큰 이미지는 추론 전에 줄이는데, 지금까지는 줄인 이미지 기준 좌표를 돌려줬습니다.
     * **동작 변경:** 예전 `plugins/` 디렉터리 로더를 없앴습니다. JAR에서 풀리지 않았고, 샘플은 브리지가 읽지 못하는 응답을 돌려줬습니다. 대신 `@task`와 `moduleDir(...)`로 작업을 등록하세요.
     * **수정 (demo-web):** 이미지·웹캠 페이지가 JSON 응답을 이미지로 다루지 않고, YOLO 검출 결과를 캔버스에 그립니다. `/api/plugin/MATH_ADD`는 `demo-web/python/tasks/`의 `@task` 모듈을 실행합니다.

@@ -39,13 +39,41 @@ def test_file_protocol_round_trip(worker, tmp_path):
     assert out_info is None
 
     written = worker.write_output_data("req1", b"result", None)
-    assert written == 6
+    assert written == "6"
     assert read_output_file(tmp_path, "req1") == b"result"
 
 
-def test_output_larger_than_shared_memory_raises(worker):
-    with pytest.raises(ValueError, match="Output too large"):
-        worker.write_output_data("req2", b"x" * 11, ("unused_shm", 10))
+def test_output_larger_than_shared_memory_falls_back_to_file(worker, tmp_path):
+    assert worker.write_output_data("req2", b"x" * 11, ("unused_shm", 10)) == "11 FILE"
+    assert read_output_file(tmp_path, "req2") == b"x" * 11
+
+
+def test_shared_memory_round_trip_through_daemon(tmp_path, module_dir):
+    from multiprocessing import shared_memory
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    shm_in = shared_memory.SharedMemory(create=True, size=4096)
+    shm_out = shared_memory.SharedMemory(create=True, size=8)
+    proc = start_daemon(work_dir, module_dir)
+    try:
+        assert proc.stdout.readline().strip() == "READY"
+        shm_in.buf[:2] = b"hi"
+        proc.stdin.write(f"EXECUTE SHOUT r1 SHMEM {shm_in.name} 2 {shm_out.name} 8\n")
+        proc.stdin.flush()
+        assert proc.stdout.readline().strip() == "DONE 2"
+        assert bytes(shm_out.buf[:2]) == b"HI"
+
+        shm_in.buf[:10] = b"abcdefghij"
+        proc.stdin.write(f"EXECUTE SHOUT r2 SHMEM {shm_in.name} 10 {shm_out.name} 8\n")
+        proc.stdin.flush()
+        assert proc.stdout.readline().strip() == "DONE 10 FILE"
+        assert read_output_file(work_dir, "r2") == b"ABCDEFGHIJ"
+        stop(proc)
+        assert "leaked shared_memory" not in proc.stderr.read()
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        shm_in.close(); shm_in.unlink(); shm_out.close(); shm_out.unlink()
 
 
 def test_daemon_status_round_trip(tmp_path):

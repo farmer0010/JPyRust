@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.nio.ByteBuffer;
 import java.nio.file.Paths;
+import java.time.Duration;
 import org.junit.jupiter.api.Test;
 
 public class JPyRustBridgeLifecycleTest {
@@ -64,6 +65,21 @@ public class JPyRustBridgeLifecycleTest {
                 assertSame(bridge, bridge.extras("ml"));
             }
         });
+    }
+
+    @Test
+    public void invalidPoolAndTimeoutsAreRejected() {
+        JPyRustBridge bridge = new JPyRustBridge("lifecycle_test");
+        assertThrows(IllegalArgumentException.class, () -> bridge.workers(0));
+        assertThrows(IllegalArgumentException.class, () -> bridge.timeouts(Duration.ZERO, Duration.ofSeconds(1)));
+        assertSame(bridge, bridge.workers(4).timeouts(Duration.ofSeconds(30), Duration.ofSeconds(5))
+                .model("custom.pt", 0.3f).whisperModel("tiny"));
+    }
+
+    @Test
+    public void callAsyncBeforeInitializeThrows() {
+        JPyRustBridge bridge = new JPyRustBridge("lifecycle_test");
+        assertThrows(IllegalStateException.class, () -> bridge.callAsync("ECHO", new byte[0], ""));
     }
 
     @Test

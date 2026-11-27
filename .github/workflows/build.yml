@@ -150,7 +150,7 @@ jobs:
       shell: bash
       env:
         JPYRUST_TEST_PYTHON: ${{ steps.py.outputs.python-path }}
-      run: ./gradlew :java-api:test --tests com.jpyrust.PythonProvisioningTest --console=plain
+      run: ./gradlew :java-api:test --tests com.jpyrust.PythonProvisioningTest --tests com.jpyrust.WorkerBehaviorTest --console=plain
 
     - name: Upload test report
       if: always()

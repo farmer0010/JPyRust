@@ -52,7 +52,7 @@ jar:
 	./gradlew :java-api:jar
 
 provision-test:
-	JPYRUST_PROVISION_TEST=true ./gradlew :java-api:test --tests com.jpyrust.PythonProvisioningTest
+	JPYRUST_PROVISION_TEST=true ./gradlew :java-api:test --tests com.jpyrust.PythonProvisioningTest --tests com.jpyrust.WorkerBehaviorTest
 
 notices:
 	python3 rust-bridge/third_party_notices.py > docs/THIRD_PARTY_NOTICES.md

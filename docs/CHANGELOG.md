@@ -1,6 +1,10 @@
 # Changelog
 
 * **Unreleased**
+    * **Feature:** `workers(n)` runs `n` Python processes behind one bridge; calls from different threads run in parallel, so CPU-bound Python code is no longer serialized by a single GIL. `callAsync(task, bytes, args)` returns a `CompletableFuture`.
+    * **Feature:** `timeouts(startup, task)`, `model(path, confidence)` and `whisperModel(path)` configure the bridge before `initialize()`, replacing the long `initialize(...)` overloads (which still work).
+    * **Behavior Change:** Failures throw a `JPyRustException` hierarchy: `TaskFailedException` (the Python task raised), `WorkerTimeoutException` (task exceeded the timeout; the worker is restarted) and `WorkerCrashedException` (the worker died, e.g. a segfault). All extend `RuntimeException`. `processEdgeDetection`, `processNlp` and `processRegression` now throw like every other call instead of returning `null` or an `{"error": ...}` string.
+    * **Perf:** Every task, including `call()`, now passes data through reusable shared-memory buffers that grow on demand (up to 256 MB), instead of files or per-call segments. On Apple M5, a 16 B round trip dropped from 0.22 ms to 0.016 ms and 1 MB from 0.67 ms to 0.19 ms (p50). Outputs that do not fit fall back to a file, so the old 1 MB output limit is gone. Python no longer reports "leaked shared_memory" at exit.
     * **Fix:** YOLO `bbox` values are now in the original image's pixel coordinates. Images wider than 640 px are resized for inference, and the boxes were previously returned in the resized image's coordinates.
     * **Behavior Change:** The legacy `plugins/` directory loader is removed. It was never extracted from the JAR, and its sample returned a response the bridge could not read. Register tasks with `@task` and `moduleDir(...)` instead.
     * **Fix (demo-web):** The image and webcam pages draw the YOLO detections on a canvas instead of treating the JSON response as an image. `/api/plugin/MATH_ADD` runs the `@task` module in `demo-web/python/tasks/`.
