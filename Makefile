@@ -25,7 +25,7 @@ PLATFORM := $(OS)-$(ARCH)
 NATIVE_DIR := java-api/src/main/resources/natives/$(PLATFORM)
 PYTHON ?= .venv/bin/python
 
-.PHONY: check native rust-check java-test python-test jar provision-test
+.PHONY: check native rust-check java-test python-test jar provision-test notices
 
 check: rust-check java-test python-test
 
@@ -53,3 +53,6 @@ jar:
 
 provision-test:
 	JPYRUST_PROVISION_TEST=true ./gradlew :java-api:test --tests com.jpyrust.PythonProvisioningTest
+
+notices:
+	python3 rust-bridge/third_party_notices.py > docs/THIRD_PARTY_NOTICES.md

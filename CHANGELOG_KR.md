@@ -1,6 +1,7 @@
 # 변경 이력
 
 * **Unreleased**
+    * **기타:** `rust-bridge` 버전을 라이브러리와 맞췄고(0.1.3 → 1.3.1), `Cargo.toml`과 `gradle.properties`가 다르면 CI가 실패합니다. JAR에 정적으로 링크된 Rust 크레이트의 고지문 `META-INF/THIRD_PARTY_NOTICES.md`를 넣었습니다(`make notices`로 다시 만듦).
     * **기능:** `python(Path)`로 `uv`나 python.org 다운로드 대신 이미 있는 인터프리터에서 venv를 만듭니다(`python -m venv --system-site-packages`). 모든 OS에서 동작하며 오프라인·사내망·컨테이너 환경용입니다.
     * **기능:** `JPyRustBridge`가 `AutoCloseable`을 구현해 try-with-resources로 쓸 수 있습니다.
     * **동작 변경:** 로그를 `System.out`/`System.err` 대신 `System.Logger`(`com.jpyrust`)로 남깁니다. 네이티브 로딩과 pip 출력은 `DEBUG` 레벨이라 기본 설정에서는 보이지 않습니다.

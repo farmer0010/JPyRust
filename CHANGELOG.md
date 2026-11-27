@@ -1,6 +1,7 @@
 # Changelog
 
 * **Unreleased**
+    * **Chore:** `rust-bridge` is versioned with the library (1.3.1, was 0.1.3), and CI fails if `Cargo.toml` and `gradle.properties` disagree. The JAR now carries `META-INF/THIRD_PARTY_NOTICES.md` for the statically linked Rust crates (`make notices` regenerates it).
     * **Feature:** `python(Path)` builds the venv from an existing interpreter (`python -m venv --system-site-packages`) instead of `uv` or the python.org download, on every OS — for offline, intranet and container setups.
     * **Feature:** `JPyRustBridge` implements `AutoCloseable`, so it works with try-with-resources.
     * **Behavior Change:** Logs go through `System.Logger` (`com.jpyrust`) instead of `System.out`/`System.err`. Native-loading and pip output are logged at `DEBUG`, so they are hidden by default.
