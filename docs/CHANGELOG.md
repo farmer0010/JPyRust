@@ -1,6 +1,9 @@
 # Changelog
 
 * **Unreleased**
+    * **Fix:** YOLO `bbox` values are now in the original image's pixel coordinates. Images wider than 640 px are resized for inference, and the boxes were previously returned in the resized image's coordinates.
+    * **Behavior Change:** The legacy `plugins/` directory loader is removed. It was never extracted from the JAR, and its sample returned a response the bridge could not read. Register tasks with `@task` and `moduleDir(...)` instead.
+    * **Fix (demo-web):** The image and webcam pages draw the YOLO detections on a canvas instead of treating the JSON response as an image. `/api/plugin/MATH_ADD` runs the `@task` module in `demo-web/python/tasks/`.
     * **Feature:** `python(Path)` builds the venv from an existing interpreter (`python -m venv --system-site-packages`) instead of `uv` or the python.org download, on every OS — for offline, intranet and container setups.
     * **Feature:** `JPyRustBridge` implements `AutoCloseable`, so it works with try-with-resources.
     * **Behavior Change:** Logs go through `System.Logger` (`com.jpyrust`) instead of `System.out`/`System.err`. Native-loading and pip output are logged at `DEBUG`, so they are hidden by default.

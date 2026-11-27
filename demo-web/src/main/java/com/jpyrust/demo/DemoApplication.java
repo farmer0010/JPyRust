@@ -5,6 +5,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.concurrent.CompletableFuture;
 
 @SpringBootApplication
@@ -17,8 +19,12 @@ public class DemoApplication {
     @Bean(destroyMethod = "close")
     public JPyRustBridge jpyRustBridge(@Value("${app.ai.work-dir}") String workDir,
             @Value("${app.ai.model-path:yolov8n.pt}") String modelPath,
-            @Value("${app.ai.confidence:0.5}") float confidence) {
+            @Value("${app.ai.confidence:0.5}") float confidence,
+            @Value("${app.ai.module-dir:python/tasks}") Path moduleDir) {
         JPyRustBridge bridge = new JPyRustBridge("demo-web").extras("vision", "audio", "ml");
+        if (Files.isDirectory(moduleDir)) {
+            bridge.moduleDir(moduleDir);
+        }
         System.out.println("Scheduling JPyRust initialization (non-blocking)...");
         CompletableFuture.runAsync(() -> {
             try {
