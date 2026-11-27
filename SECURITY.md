@@ -16,5 +16,5 @@ Please include the affected version, platform (OS and architecture), and steps t
 
 - Shared memory between the JVM and the Python daemon (access control, especially on Windows)
 - Native library extraction and loading (`NativeLoader`)
-- Python plugin loading (every `.py` file in `plugins/` next to `ai_worker.py` is imported)
+- Python module loading (every `.py` file in each `moduleDir(...)` is imported at daemon start)
 - The Python environment provisioned under `~/.jpyrust/<instanceId>/`

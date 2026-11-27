@@ -1,6 +1,9 @@
 # 변경 이력
 
 * **Unreleased**
+    * **수정:** YOLO의 `bbox` 값이 원본 이미지의 픽셀 좌표로 나옵니다. 폭이 640px보다 큰 이미지는 추론 전에 줄이는데, 지금까지는 줄인 이미지 기준 좌표를 돌려줬습니다.
+    * **동작 변경:** 예전 `plugins/` 디렉터리 로더를 없앴습니다. JAR에서 풀리지 않았고, 샘플은 브리지가 읽지 못하는 응답을 돌려줬습니다. 대신 `@task`와 `moduleDir(...)`로 작업을 등록하세요.
+    * **수정 (demo-web):** 이미지·웹캠 페이지가 JSON 응답을 이미지로 다루지 않고, YOLO 검출 결과를 캔버스에 그립니다. `/api/plugin/MATH_ADD`는 `demo-web/python/tasks/`의 `@task` 모듈을 실행합니다.
     * **기능:** `python(Path)`로 `uv`나 python.org 다운로드 대신 이미 있는 인터프리터에서 venv를 만듭니다(`python -m venv --system-site-packages`). 모든 OS에서 동작하며 오프라인·사내망·컨테이너 환경용입니다.
     * **기능:** `JPyRustBridge`가 `AutoCloseable`을 구현해 try-with-resources로 쓸 수 있습니다.
     * **동작 변경:** 로그를 `System.out`/`System.err` 대신 `System.Logger`(`com.jpyrust`)로 남깁니다. 네이티브 로딩과 pip 출력은 `DEBUG` 레벨이라 기본 설정에서는 보이지 않습니다.

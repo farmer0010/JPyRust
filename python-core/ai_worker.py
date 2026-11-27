@@ -53,7 +53,6 @@ EXTRA_TASKS = {
 }
 
 def initialize_models():
-    load_plugins()
     load_user_modules()
 
 def load_user_modules():
@@ -107,23 +106,6 @@ def make_task_handler(fn):
         except Exception as e:
             return "ERROR " + " ".join(f"{type(e).__name__}: {e}".split())
     return handle
-
-def load_plugins():
-    plugin_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plugins")
-    if not os.path.exists(plugin_dir):
-        return
-    plugin_files = glob.glob(os.path.join(plugin_dir, "*.py"))
-    for plugin_file in plugin_files:
-        if "__init__" in plugin_file: continue
-        try:
-            module_name = os.path.splitext(os.path.basename(plugin_file))[0]
-            spec = importlib.util.spec_from_file_location(module_name, plugin_file)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            if hasattr(module, "TASK_TYPE") and hasattr(module, "handle"):
-                TASK_HANDLERS[module.TASK_TYPE] = module.handle
-        except:
-            pass
 
 def parse_input_protocol(request_id, metadata, task_type=None):
     TEXT_BASED_TASKS = {"NLP_TEXTBLOB", "SENTIMENT", "REGRESSION", "STATUS"}

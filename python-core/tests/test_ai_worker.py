@@ -178,12 +178,23 @@ def test_daemon_starts_without_numpy_or_cv2(tmp_path, module_dir):
 
 FAKE_ULTRALYTICS = '''import sys, types
 fake = types.ModuleType("ultralytics")
-class YOLO:
+class Vec(list):
+    def tolist(self):
+        return list(self)
+class Box:
+    xyxy = [Vec([10.0, 20.0, 110.0, 220.0])]
+    cls = [0]
+    conf = [0.9]
+class Result:
     names = {0: "bus"}
+    boxes = [Box()]
+class YOLO:
     def __init__(self, path):
         pass
     def to(self, device):
         pass
+    def __call__(self, image, conf, verbose):
+        return [Result()]
 fake.YOLO = YOLO
 sys.modules["ultralytics"] = fake
 '''
@@ -209,6 +220,13 @@ def test_vision_extra_registers_edge_detect(tmp_path):
         assert execute(proc, tmp_path, "EDGE_DETECT", "r1", pixels, "4 4 3").startswith("DONE ")
         assert read_output_file(tmp_path, "r1")[:2] == b"\xff\xd8"
         assert execute(proc, tmp_path, "YOLO", "r2", b"not an image") == "ERROR ValueError: Failed to decode image"
+
+        import cv2
+        import numpy as np
+        _, png = cv2.imencode(".png", np.zeros((640, 1280, 3), dtype=np.uint8))
+        assert execute(proc, tmp_path, "YOLO", "r3", png.tobytes()).startswith("DONE ")
+        detections = json.loads(read_output_file(tmp_path, "r3"))["detections"]
+        assert detections == [{"bbox": [20.0, 40.0, 200.0, 400.0], "label": "bus", "score": 0.9}]
         stop(proc)
     finally:
         if proc.poll() is None:
