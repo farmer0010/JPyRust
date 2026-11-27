@@ -25,7 +25,7 @@ PLATFORM := $(OS)-$(ARCH)
 NATIVE_DIR := java-api/src/main/resources/natives/$(PLATFORM)
 PYTHON ?= .venv/bin/python
 
-.PHONY: check native rust-check java-test python-test jar provision-test notices
+.PHONY: check native rust-check java-test python-test jar provision-test notices bench
 
 check: rust-check java-test python-test
 
@@ -39,7 +39,7 @@ rust-check:
 	cd rust-bridge && cargo test
 
 java-test:
-	./gradlew :java-api:test :demo-web:compileJava
+	./gradlew :java-api:test :spring-boot-starter:test :demo-web:compileJava :examples:quickstart:compileJava :examples:spring-boot:compileJava :benchmarks:jmhClasses
 
 $(PYTHON):
 	uv venv --python 3.11 .venv
@@ -56,3 +56,6 @@ provision-test:
 
 notices:
 	python3 rust-bridge/third_party_notices.py > docs/THIRD_PARTY_NOTICES.md
+
+bench:
+	./gradlew :benchmarks:jmh

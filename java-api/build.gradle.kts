@@ -1,15 +1,24 @@
 plugins {
     `java-library`
     `maven-publish`
+    signing
 }
+
+apply(from = rootProject.file("gradle/publishing.gradle.kts"))
+
+val jitpack = System.getenv("JITPACK") == "true"
 
 publishing {
     publications {
         create<MavenPublication>("mavenJava") {
-            groupId = "com.github.farmer0010"
-            artifactId = "JPyRust"
+            groupId = if (jitpack) "com.github.farmer0010" else "io.github.farmer0010"
+            artifactId = if (jitpack) "JPyRust" else "jpyrust"
             version = project.version.toString()
             from(components["java"])
+            pom {
+                name.set("JPyRust")
+                description.set("Call CPython from Java through a JVM-managed, crash-isolated worker pool, with Python provisioned automatically.")
+            }
         }
     }
 }

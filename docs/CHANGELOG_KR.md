@@ -1,6 +1,9 @@
 # 변경 이력
 
 * **Unreleased**
+    * **기능:** `jpyrust-spring-boot-starter`: `jpyrust.*` 설정으로 브리지를 구성하고, `JPyRustTemplate`을 제공하며, Micrometer 타이머 `jpyrust.calls`(태그 `task`, `outcome`)를 기록하고 Actuator 헬스 체크를 추가합니다.
+    * **빌드:** Maven Central에 `io.github.farmer0010:jpyrust`와 `io.github.farmer0010:jpyrust-spring-boot-starter`로 배포합니다. sources·javadoc JAR과 서명된 POM을 포함합니다. JitPack 빌드는 기존 `com.github.farmer0010:JPyRust` 좌표를 유지합니다.
+    * **문서:** 상주 Python HTTP 서버와 비교한 JMH 벤치마크(`./gradlew :benchmarks:jmh`, [BENCHMARKS.md](BENCHMARKS.md)), [API 문서](API.md), [지원 매트릭스와 버전 정책](COMPATIBILITY.md), 실행 가능한 `examples/quickstart`와 `examples/spring-boot`(Dockerfile 포함)를 추가했습니다.
     * **동작 변경:** macOS와 Linux에 `uv`가 더 이상 필요 없습니다. 첫 `initialize()`가 OS·아키텍처에 맞는 python-build-standalone의 포터블 CPython 3.11.18을 내려받아 SHA-256을 검증하고 그걸로 venv를 만듭니다. 내려받은 파일(Windows Python zip과 pip wheel 포함)은 `~/.jpyrust/cache`에 캐시돼 인스턴스끼리 함께 씁니다. glibc 기반 Docker 이미지에서도 추가 설정 없이 AI 작업이 돌아갑니다.
     * **기능:** `workers(n)`으로 브리지 하나 뒤에 Python 프로세스 `n`개를 띄웁니다. 여러 스레드의 호출이 병렬로 돌아서, CPU를 쓰는 Python 코드가 더 이상 GIL 하나에 묶여 줄 서지 않습니다. `callAsync(task, bytes, args)`는 `CompletableFuture`를 돌려줍니다.
     * **기능:** `timeouts(startup, task)`, `model(path, confidence)`, `whisperModel(path)`로 `initialize()` 전에 설정합니다. 긴 `initialize(...)` 오버로드를 대신하며, 기존 오버로드도 그대로 동작합니다.

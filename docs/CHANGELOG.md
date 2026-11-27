@@ -1,6 +1,9 @@
 # Changelog
 
 * **Unreleased**
+    * **Feature:** `jpyrust-spring-boot-starter`: configures the bridge from `jpyrust.*` properties, exposes `JPyRustTemplate`, records a Micrometer timer `jpyrust.calls` (tags `task`, `outcome`) and adds an Actuator health indicator.
+    * **Build:** Artifacts are published to Maven Central as `io.github.farmer0010:jpyrust` and `io.github.farmer0010:jpyrust-spring-boot-starter`, with sources and javadoc JARs and signed POMs. JitPack builds keep the `com.github.farmer0010:JPyRust` coordinates.
+    * **Docs:** JMH benchmarks against a persistent Python HTTP server (`./gradlew :benchmarks:jmh`, [BENCHMARKS.md](BENCHMARKS.md)), an [API reference](API.md), a [support matrix and versioning policy](COMPATIBILITY.md), and runnable `examples/quickstart` and `examples/spring-boot` (with a Dockerfile).
     * **Behavior Change:** macOS and Linux no longer need `uv`. The first `initialize()` downloads a portable CPython 3.11.18 build from python-build-standalone for the host OS/architecture, verifies its SHA-256 and builds the venv from it. Downloads (including the Windows Python zip and pip wheel) are cached in `~/.jpyrust/cache` and shared across instances. Docker images based on glibc now run AI tasks without extra setup.
     * **Feature:** `workers(n)` runs `n` Python processes behind one bridge; calls from different threads run in parallel, so CPU-bound Python code is no longer serialized by a single GIL. `callAsync(task, bytes, args)` returns a `CompletableFuture`.
     * **Feature:** `timeouts(startup, task)`, `model(path, confidence)` and `whisperModel(path)` configure the bridge before `initialize()`, replacing the long `initialize(...)` overloads (which still work).
