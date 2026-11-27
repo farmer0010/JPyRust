@@ -167,8 +167,8 @@ java -cp java-api/build/classes/java/main:java-api/build/classes/java/test:java-
      com.jpyrust.LatencyBenchmark
 ```
 
-`sample.png`에 대해 실제 YOLOv8n 추론을 돌려서, 매번 새로 띄우는 콜드 Python subprocess와 상시 대기 SHMEM 데몬을 비교합니다. 어떤 수치가 나오고 왜 그런 모양인지는 README의 [성능 벤치마크 섹션](../README_KR.md#-성능-벤치마크)을 참고하세요.
+`sample.png`에 대해 실제 YOLOv8n 추론을 돌려서, 매번 새로 띄우는 콜드 Python subprocess와 상시 대기 SHMEM 데몬을 비교합니다. 어떤 수치가 나오고 왜 그런 모양인지는 README의 [성능 벤치마크 섹션](README_KR.md#-성능-벤치마크)을 참고하세요.
 
 ## 문제 해결
 
-자주 발생하는 문제(네이티브 라이브러리를 못 찾음, Windows 공유 메모리 권한, Python 의존성 문제)와 해결법은 [메인 README](../README_KR.md)의 **설정 및 문제 해결** 섹션을 참고하세요.
+자주 발생하는 문제(네이티브 라이브러리를 못 찾음, Windows 공유 메모리 권한, Python 의존성 문제)와 해결법은 [메인 README](README_KR.md)의 **설정 및 문제 해결** 섹션을 참고하세요.

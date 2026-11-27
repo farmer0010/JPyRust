@@ -46,13 +46,13 @@ Other targets: `make jar` builds the library JAR, and `make provision-test` prov
 
 `make` isn't available on Windows by default; use the commands above directly.
 
-After changing `requirements.txt`, `python-core/extras/*.txt` or the Python version, re-check YOLO/Whisper output against `baseline/` as described in [`test-fixtures/README.md`](test-fixtures/README.md).
+After changing `requirements.txt`, `python-core/extras/*.txt` or the Python version, re-check YOLO/Whisper output against `baseline/` as described in [`test-fixtures/README.md`](../test-fixtures/README.md).
 
 ## Pull requests
 
 - Branch from `main`.
 - Use a Conventional Commits prefix in the title: `feat:`, `fix:`, `docs:`, `test:`, `chore:`.
-- Add an entry under **Unreleased** in both `CHANGELOG.md` and `CHANGELOG_KR.md` for user-visible changes. Mark behavior changes explicitly.
+- Add an entry under **Unreleased** in both `docs/CHANGELOG.md` and `docs/CHANGELOG_KR.md` for user-visible changes. Mark behavior changes explicitly.
 - Do not commit locally built native binaries in a feature PR. Bundled binaries are replaced from CI artifacts in a separate PR.
 - Line endings are LF, enforced by `.gitattributes` (`.bat`/`.cmd`/`.ps1` stay CRLF).
 - CI must pass.

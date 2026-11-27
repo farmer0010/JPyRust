@@ -20,7 +20,7 @@
 </p>
 
 <div align="center">
-  <a href="README_KR.md">🇰🇷 한국어 버전 (Korean Version)</a> · <a href="docs/GUIDE.md">📚 User Guide</a>
+  <a href="docs/README_KR.md">🇰🇷 한국어 버전 (Korean Version)</a> · <a href="docs/GUIDE.md">📚 User Guide</a> · <a href="docs/ARCHITECTURE.md">🏗️ Architecture</a> · <a href="docs/CONTRIBUTING.md">🤝 Contributing</a>
 </div>
 
 ---
@@ -289,7 +289,7 @@ Native failures surface as Java exceptions instead of crashing the JVM or return
 
 ## 📜 Version History
 
-See [CHANGELOG.md](CHANGELOG.md).
+See [CHANGELOG.md](docs/CHANGELOG.md).
 
 ---
 

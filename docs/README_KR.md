@@ -4,7 +4,7 @@
 
 [![Build Status](https://img.shields.io/github/actions/workflow/status/farmer0010/JPyRust/build.yml?style=flat-square&logo=github&label=Build)](https://github.com/farmer0010/JPyRust/actions)
 [![Release](https://img.shields.io/github/v/release/farmer0010/JPyRust?style=flat-square&color=blue&label=Release)](https://jitpack.io/#farmer0010/JPyRust)
-[![License](https://img.shields.io/github/license/farmer0010/JPyRust?style=flat-square&color=green)](LICENSE)
+[![License](https://img.shields.io/github/license/farmer0010/JPyRust?style=flat-square&color=green)](../LICENSE)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey?style=flat-square)
 
 <p align="center">
@@ -20,7 +20,7 @@
 </p>
 
 <div align="center">
-  <a href="README.md">🇺🇸 English Version</a> · <a href="docs/GUIDE_KR.md">📚 사용자 가이드</a>
+  <a href="../README.md">🇺🇸 English Version</a> · <a href="GUIDE_KR.md">📚 사용자 가이드</a> · <a href="ARCHITECTURE.md">🏗️ 아키텍처</a> · <a href="CONTRIBUTING.md">🤝 기여 가이드</a>
 </div>
 
 ---
@@ -104,7 +104,7 @@ sequenceDiagram
 
 ## ⚡ 성능 벤치마크
 
-직접 돌려볼 수 있는 실측 벤치마크가 레포에 포함되어 있습니다: [`LatencyBenchmark.java`](java-api/src/test/java/com/jpyrust/LatencyBenchmark.java). 실제 이미지(`sample.png`)에 대해 진짜 YOLOv8n 추론을 워밍업 후 10회 반복하며 다음 두 방식을 비교합니다.
+직접 돌려볼 수 있는 실측 벤치마크가 레포에 포함되어 있습니다: [`LatencyBenchmark.java`](../java-api/src/test/java/com/jpyrust/LatencyBenchmark.java). 실제 이미지(`sample.png`)에 대해 진짜 YOLOv8n 추론을 워밍업 후 10회 반복하며 다음 두 방식을 비교합니다.
 - **레거시 Subprocess** — 호출할 때마다 새 Python 인터프리터를 띄우고 torch/ultralytics를 처음부터 임포트 + 모델 로드.
 - **JPyRust (JNI + SHMEM)** — 모델이 이미 로드된 상시 대기 데몬 하나를 재사용하고, 이미지만 공유 메모리로 오갑니다.
 
@@ -294,7 +294,7 @@ byte[] raw = bridge.call("WORD_COUNT", bytes, "any args here");  // 바이트 �
 
 ## 📄 라이선스
 
-이 프로젝트는 **MIT 라이선스**를 따릅니다. 자세한 내용은 [LICENSE](LICENSE) 파일을 참조하세요.
+이 프로젝트는 **MIT 라이선스**를 따릅니다. 자세한 내용은 [LICENSE](../LICENSE) 파일을 참조하세요.
 
 <div align="center">
   <sub>Built with 🦀 Rust & ☕ Java by Farmer0010 (JPyRust Team).</sub>
