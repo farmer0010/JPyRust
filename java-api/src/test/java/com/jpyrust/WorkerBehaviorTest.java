@@ -27,7 +27,7 @@ import org.junit.jupiter.api.io.TempDir;
 public class WorkerBehaviorTest {
 
     private static final String TASKS = String.join("\n",
-            "import ctypes",
+            "import faulthandler",
             "import os",
             "import time",
             "from jpyrust import task",
@@ -61,7 +61,7 @@ public class WorkerBehaviorTest {
             "",
             "@task(\"SEGFAULT\")",
             "def segfault(data, args):",
-            "    ctypes.string_at(0)",
+            "    faulthandler._sigsegv()",
             "");
 
     @TempDir(cleanup = CleanupMode.NEVER)
