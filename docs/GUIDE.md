@@ -25,8 +25,8 @@ A hands-on guide to installing, initializing, and calling JPyRust from a Java ap
 | Java | 17+ |
 | Platform | Windows, macOS, or Linux (x86_64) |
 | Windows | Nothing extra — the embedded Python is bundled and self-installs. |
-| macOS / Linux | [`uv`](https://docs.astral.sh/uv/getting-started/installation/) on your `PATH` (e.g. `curl -LsSf https://astral.sh/uv/install.sh | sh` or `brew install uv` on macOS). JPyRust runs `uv venv --python 3.11 --seed` to provision an isolated venv — `uv` fetches a portable Python 3.11 on first run if it doesn't already manage one, so no interpreter needs to be pre-installed. |
-| Docker | Not currently supported for AI inference — the published base image ships no Python and no `uv`. |
+| macOS / Linux | Nothing. JPyRust downloads a checksum-verified portable CPython 3.11.18 (python-build-standalone) on first run and builds an isolated venv from it. Alpine (musl) needs `python(...)`. |
+| Docker | Works on glibc images; the first run downloads Python into the container. |
 
 ## Installation
 
@@ -153,8 +153,8 @@ Work directories default to `~/.jpyrust/<instanceId>`, so different `instanceId`
 ## Platform Notes
 
 - **Windows**: Ships a portable embedded Python distribution, bundled inside the JAR and extracted on first `initialize()`. Fully self-contained.
-- **macOS / Linux**: There's no portable embedded Python for these platforms, so JPyRust requires `uv` on `PATH` and runs `uv venv --python 3.11 --seed` to build a private venv (`~/.jpyrust/<instanceId>/venv`). `uv` downloads a portable Python 3.11 on first run if needed — the interpreter itself is no longer assumed to be pre-installed, only `uv` is.
-- **Docker**: AI inference does not currently work inside the published container image — it ships no Python and no `uv`.
+- **macOS / Linux**: JPyRust downloads a portable CPython 3.11.18 from python-build-standalone, verifies its SHA-256, caches it in `~/.jpyrust/cache` and builds a private venv (`~/.jpyrust/<instanceId>/venv`) from it. Nothing has to be installed beforehand.
+- **Docker**: glibc-based images work; the first `initialize()` downloads Python into the container. Raise `--shm-size` for shared-memory buffers above Docker's 64 MB default (larger payloads fall back to files).
 - All three platforms ship a matching native library (`jpyrust.dll` / `jpyrust.dylib` / `jpyrust.so`) inside the JAR — you don't need to build anything yourself to use the published artifact.
 
 ## Running the Benchmark Yourself

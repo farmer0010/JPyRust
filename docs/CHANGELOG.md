@@ -1,6 +1,7 @@
 # Changelog
 
 * **Unreleased**
+    * **Behavior Change:** macOS and Linux no longer need `uv`. The first `initialize()` downloads a portable CPython 3.11.18 build from python-build-standalone for the host OS/architecture, verifies its SHA-256 and builds the venv from it. Downloads (including the Windows Python zip and pip wheel) are cached in `~/.jpyrust/cache` and shared across instances. Docker images based on glibc now run AI tasks without extra setup.
     * **Feature:** `workers(n)` runs `n` Python processes behind one bridge; calls from different threads run in parallel, so CPU-bound Python code is no longer serialized by a single GIL. `callAsync(task, bytes, args)` returns a `CompletableFuture`.
     * **Feature:** `timeouts(startup, task)`, `model(path, confidence)` and `whisperModel(path)` configure the bridge before `initialize()`, replacing the long `initialize(...)` overloads (which still work).
     * **Behavior Change:** Failures throw a `JPyRustException` hierarchy: `TaskFailedException` (the Python task raised), `WorkerTimeoutException` (task exceeded the timeout; the worker is restarted) and `WorkerCrashedException` (the worker died, e.g. a segfault). All extend `RuntimeException`. `processEdgeDetection`, `processNlp` and `processRegression` now throw like every other call instead of returning `null` or an `{"error": ...}` string.

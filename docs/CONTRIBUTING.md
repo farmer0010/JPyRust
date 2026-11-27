@@ -16,7 +16,7 @@ Thanks for helping out. Issues and pull requests in English or Korean are both w
 
 - JDK 17
 - Rust (stable)
-- [`uv`](https://docs.astral.sh/uv/) on macOS/Linux (the library provisions its Python 3.11 venv with it)
+- [`uv`](https://docs.astral.sh/uv/) on macOS/Linux to create the `.venv` that `make python-test` uses (the library itself does not need it)
 - Python 3.11 for the Python tests
 
 ## Build and test

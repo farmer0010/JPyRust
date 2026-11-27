@@ -114,8 +114,10 @@ jobs:
         distribution: 'temurin'
         java-version: '17'
 
-    - name: Test java-api and compile demo-web
+    - name: Test java-api with a real Python worker and compile demo-web
       shell: bash
+      env:
+        JPYRUST_PROVISION_TEST: "true"
       run: ./gradlew :java-api:test :demo-web:compileJava --console=plain
 
   windows-provision:
@@ -124,6 +126,7 @@ jobs:
     runs-on: windows-latest
     env:
       JPYRUST_PROVISION_TEST: "true"
+      JPYRUST_FULL_STACK_TEST: "true"
     steps:
     - uses: actions/checkout@v4
 
