@@ -196,6 +196,13 @@ jobs:
         distribution: 'temurin'
         java-version: '17'
 
+    - name: Check Cargo and Gradle versions match
+      shell: bash
+      run: |
+        gradle_version=$(grep '^version=' gradle.properties | cut -d= -f2)
+        cargo_version=$(grep -m1 '^version = ' rust-bridge/Cargo.toml | cut -d'"' -f2)
+        [[ "$gradle_version" == "$cargo_version" ]] || { echo "gradle.properties $gradle_version != Cargo.toml $cargo_version"; exit 1; }
+
     - name: Resolve version
       id: version
       shell: bash

@@ -55,6 +55,8 @@ After changing `requirements.txt`, `python-core/extras/*.txt` or the Python vers
 - Add an entry under **Unreleased** in both `docs/CHANGELOG.md` and `docs/CHANGELOG_KR.md` for user-visible changes. Mark behavior changes explicitly.
 - Do not commit locally built native binaries in a feature PR. Bundled binaries are replaced from CI artifacts in a separate PR.
 - Line endings are LF, enforced by `.gitattributes` (`.bat`/`.cmd`/`.ps1` stay CRLF).
+- Bump the version in `gradle.properties` and `rust-bridge/Cargo.toml` together; CI fails if they differ.
+- After changing `rust-bridge/Cargo.lock`, run `make notices` and commit `docs/THIRD_PARTY_NOTICES.md`.
 - CI must pass.
 
 ## Reporting security issues

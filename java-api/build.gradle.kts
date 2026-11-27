@@ -56,6 +56,8 @@ tasks.named<ProcessResources>("processResources") {
 
     exclude("python_dist/**")
 
+    from("../docs/THIRD_PARTY_NOTICES.md") { into("META-INF") }
+
     from(stageCommonPythonResources.map { it.destinationDir }) {
         include("ai_worker.py", "jpyrust.py", "requirements.txt", "extras/**")
     }
