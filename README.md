@@ -137,8 +137,8 @@ From 2.0.0 the library is published to Maven Central:
 
 ```kotlin
 dependencies {
-    implementation("io.github.farmer0010:jpyrust:2.1.0")
-    // Spring Boot: implementation("io.github.farmer0010:jpyrust-spring-boot-starter:2.1.0")
+    implementation("io.github.farmer0010:jpyrust:2.2.0")
+    // Spring Boot: implementation("io.github.farmer0010:jpyrust-spring-boot-starter:2.2.0")
 }
 ```
 

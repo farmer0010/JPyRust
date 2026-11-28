@@ -1,6 +1,6 @@
 # 변경 이력
 
-* **Unreleased**
+* **v2.2.0**
     * **기능:** `devices("cuda:0", "cuda:1")`로 GPU마다 워커 하나를 띄웁니다. 워커마다 `CUDA_VISIBLE_DEVICES`가 달라서 작업 코드는 항상 `cuda:0`만 씁니다. `"cpu"`는 그 워커에서 GPU를 모두 숨깁니다.
     * **기능:** `torch("auto" | "cpu" | "cu121" | ...)`로 pip이 설치할 torch 빌드를 고릅니다. `auto`는 NVIDIA 드라이버의 CUDA 버전을 읽어 고정된 torch 버전용으로 배포된 가장 새 빌드를 고르고, GPU가 없으면 `cpu`를 골라 수 GB의 CUDA 라이브러리를 피합니다.
     * **기능:** 코드 수정 없이 실행할 때 설정을 고를 수 있습니다. `-Djpyrust.python-version`, `-Djpyrust.torch`, `-Djpyrust.devices`, `-Djpyrust.workers` 또는 같은 이름의 `JPYRUST_*` 환경변수입니다. Spring starter에는 `jpyrust.torch`, `jpyrust.devices`가 추가됩니다.
