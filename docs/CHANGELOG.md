@@ -1,6 +1,6 @@
 # Changelog
 
-* **Unreleased**
+* **v2.2.0**
     * **Feature:** `devices("cuda:0", "cuda:1")` runs one worker per GPU: each worker gets its own `CUDA_VISIBLE_DEVICES`, so task code always uses `cuda:0`. `"cpu"` hides every GPU from a worker.
     * **Feature:** `torch("auto" | "cpu" | "cu121" | ...)` chooses which torch build pip installs. `auto` reads the NVIDIA driver's CUDA version and picks the newest build published for the pinned torch version, or `cpu` on machines without a GPU (avoiding gigabytes of CUDA libraries).
     * **Feature:** Settings can be chosen when the application starts, without code changes: `-Djpyrust.python-version`, `-Djpyrust.torch`, `-Djpyrust.devices`, `-Djpyrust.workers`, or the matching `JPYRUST_*` environment variables. The Spring starter adds `jpyrust.torch` and `jpyrust.devices`.
