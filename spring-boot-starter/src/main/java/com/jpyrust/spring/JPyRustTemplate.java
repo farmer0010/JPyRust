@@ -1,8 +1,10 @@
 package com.jpyrust.spring;
 
 import com.jpyrust.JPyRustBridge;
+import com.jpyrust.NDArray;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Supplier;
 
 public class JPyRustTemplate {
 
@@ -15,15 +17,11 @@ public class JPyRustTemplate {
     }
 
     public byte[] call(String task, byte[] input, String args) {
-        long started = System.nanoTime();
-        try {
-            byte[] result = bridge.call(task, input, args);
-            observer.completed(task, System.nanoTime() - started, null);
-            return result;
-        } catch (RuntimeException e) {
-            observer.completed(task, System.nanoTime() - started, e);
-            throw e;
-        }
+        return observe(task, () -> bridge.call(task, input, args));
+    }
+
+    public NDArray call(String task, NDArray input, String args) {
+        return observe(task, () -> bridge.call(task, input, args));
     }
 
     public String call(String task, String input) {
@@ -39,5 +37,17 @@ public class JPyRustTemplate {
 
     public JPyRustBridge bridge() {
         return bridge;
+    }
+
+    private <T> T observe(String task, Supplier<T> call) {
+        long started = System.nanoTime();
+        try {
+            T result = call.get();
+            observer.completed(task, System.nanoTime() - started, null);
+            return result;
+        } catch (RuntimeException e) {
+            observer.completed(task, System.nanoTime() - started, e);
+            throw e;
+        }
     }
 }

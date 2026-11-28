@@ -23,7 +23,7 @@ final class BenchEnv {
     static JPyRustBridge bridge(int workers) throws Exception {
         Path tasks = Files.createDirectories(ROOT.resolve("tasks"));
         copy("bench_tasks.py", tasks.resolve("bench_tasks.py"));
-        Path requirements = Files.writeString(ROOT.resolve("requirements.txt"), "");
+        Path requirements = Files.writeString(ROOT.resolve("requirements.txt"), "numpy==1.26.4\n");
         JPyRustBridge bridge = new JPyRustBridge("bench").requirements(requirements).moduleDir(tasks).workers(workers);
         bridge.initialize(WORK.toString());
         return bridge;
@@ -33,7 +33,7 @@ final class BenchEnv {
         Path script = ROOT.resolve("http_server.py");
         copy("http_server.py", script);
         Path python = System.getProperty("os.name").toLowerCase().contains("win")
-                ? WORK.resolve("python_dist/python.exe")
+                ? WORK.resolve("venv/Scripts/python.exe")
                 : WORK.resolve("venv/bin/python3");
         return new ProcessBuilder(python.toString(), script.toString()).redirectErrorStream(true).start();
     }

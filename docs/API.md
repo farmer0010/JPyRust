@@ -48,6 +48,37 @@ try (JPyRustBridge bridge = new JPyRustBridge("orders")   // instance id: names 
 
 Task names are case-insensitive. Input and output have no fixed size limit: data goes through shared memory up to 256 MB (less on Linux if `/dev/shm` is small) and through files beyond that.
 
+## Arrays
+
+`NDArray` carries a typed, shaped array to and from a task without JSON or custom encoding. On the wire it is a standard NumPy `.npy` buffer, so the task receives a `numpy.ndarray` and can return one.
+
+```java
+NDArray image = NDArray.ofUInt8(pixels, 480, 640, 3);           // shape (480, 640, 3), dtype uint8
+NDArray mask = bridge.call("SEGMENT", image, "");                // whatever array the task returns
+float[] scores = bridge.call("SCORE", NDArray.of(features, 32, 128), "").toFloatArray();
+```
+
+```python
+@task("SEGMENT")
+def segment(image, args):          # numpy.ndarray, shape (480, 640, 3), read-only
+    return (image.mean(axis=2) > 128).astype("uint8")
+```
+
+| Java | dtype |
+| --- | --- |
+| `NDArray.of(float[], shape...)` / `toFloatArray()` | `float32` |
+| `NDArray.of(double[], shape...)` / `toDoubleArray()` | `float64` |
+| `NDArray.of(short[] / int[] / long[], shape...)` / `toShortArray()`, `toIntArray()`, `toLongArray()` | `int16`, `int32`, `int64` |
+| `NDArray.ofUInt8(byte[], shape...)`, `ofInt8(...)` / `toByteArray()` | `uint8`, `int8` |
+| `NDArray.of(boolean[], shape...)` / `toBooleanArray()` | `bool` |
+| `NDArray.wrap(DType, ByteBuffer, shape...)` | any of the above, from little-endian bytes |
+
+* Without a shape the array is one-dimensional. A shape whose product differs from the number of values throws `IllegalArgumentException`.
+* `call(task, NDArray, args)` and `callAsync(task, NDArray, args)` expect the task to return an array; any other result throws `JPyRustException`. To send an array and get bytes, text or JSON back, call `call(task, array.toNpy(), args)`.
+* The task's input array is read-only because it is a view over the received bytes; call `.copy()` to modify it. Returned arrays may be any supported dtype, byte order or memory layout; they are converted to little-endian, C-ordered data.
+* `shape()`, `dtype()`, `size()` and the read-only `data()` buffer describe the array; `toNpy()` / `NDArray.fromNpy(byte[])` convert to and from `.npy` bytes, which `numpy.load` reads.
+* Any `bytes` input that starts with the `.npy` magic `\x93NUMPY` reaches the task as an array.
+
 ## Exceptions
 
 All are unchecked.

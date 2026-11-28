@@ -534,6 +534,22 @@ public class JPyRustBridge implements AutoCloseable {
         return new String(result, java.nio.charset.StandardCharsets.UTF_8);
     }
 
+    public NDArray call(String taskName, NDArray input, String args) {
+        return toArray(taskName, call(taskName, input.npyBytes(), args));
+    }
+
+    public CompletableFuture<NDArray> callAsync(String taskName, NDArray input, String args) {
+        return callAsync(taskName, input.npyBytes(), args).thenApply(result -> toArray(taskName, result));
+    }
+
+    private static NDArray toArray(String taskName, byte[] result) {
+        if (!NDArray.isNpy(result)) {
+            throw new JPyRustException("Task " + taskName + " returned " + result.length
+                    + " bytes, not an array; return a numpy.ndarray");
+        }
+        return NDArray.fromNpy(result);
+    }
+
     public byte[] processImage(ByteBuffer data, int length, int width, int height, int channels) {
         String requestId = java.util.UUID.randomUUID().toString();
         String metadata = width + " " + height + " " + channels;
