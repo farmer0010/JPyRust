@@ -303,6 +303,7 @@ impl BridgeState {
         if !session.shm_disabled {
             match self.execute_shm(&mut session, task_type, request_id, metadata, data) {
                 Ok(output) => return Ok(output),
+                Err(ShmFailure::TooLarge) => {}
                 Err(ShmFailure::Unavailable(reason)) => {
                     self.log_to_java("WARN", &format!("[IPC] Shared memory unavailable ({}), using files", reason));
                     session.shm_disabled = true;
@@ -314,15 +315,18 @@ impl BridgeState {
         self.execute_file(&mut session, task_type, request_id, metadata, data)
     }
 
-    fn reserve(&self, session: &mut Session, input: bool, needed: usize) -> Result<(), String> {
+    fn reserve(&self, session: &mut Session, input: bool, needed: usize) -> Result<(), ShmFailure> {
         let current = if input { &session.input } else { &session.output };
         if current.as_ref().is_some_and(|b| b.capacity >= needed) {
             return Ok(());
         }
         let capacity = needed.max(INITIAL_SHM_SIZE).next_power_of_two();
+        if capacity > INITIAL_SHM_SIZE && capacity > shm_budget() {
+            return Err(ShmFailure::TooLarge);
+        }
         session.generation += 1;
         let name = format!("{}_{}{}", self.session_key, if input { "i" } else { "o" }, session.generation);
-        let shm = create_shmem_permissive(&name, capacity)?;
+        let shm = create_shmem_permissive(&name, capacity).map_err(ShmFailure::Unavailable)?;
         let buffer = Some(SharedBuffer { name, shm, capacity });
         if input {
             session.input = buffer;
@@ -340,12 +344,12 @@ impl BridgeState {
         metadata: &str,
         data: &[u8],
     ) -> Result<Vec<u8>, ShmFailure> {
-        if data.len() > MAX_SHM_SIZE {
-            return Err(ShmFailure::Unavailable(format!("input of {} bytes exceeds {} bytes", data.len(), MAX_SHM_SIZE)));
-        }
-        self.reserve(session, true, data.len().max(1)).map_err(ShmFailure::Unavailable)?;
+        self.reserve(session, true, data.len().max(1))?;
         let wanted = session.wanted_output.max(INITIAL_SHM_SIZE);
-        self.reserve(session, false, wanted).map_err(ShmFailure::Unavailable)?;
+        if let Err(ShmFailure::TooLarge) = self.reserve(session, false, wanted) {
+            session.wanted_output = 0;
+            self.reserve(session, false, INITIAL_SHM_SIZE)?;
+        }
 
         let input = session.input.as_mut().unwrap();
         unsafe { input.shm.as_slice_mut()[..data.len()].copy_from_slice(data) };
@@ -413,9 +417,26 @@ impl BridgeState {
 }
 
 enum ShmFailure {
+    TooLarge,
     Unavailable(String),
     Daemon(DaemonError),
     Other(String),
+}
+
+#[cfg(target_os = "linux")]
+fn shm_budget() -> usize {
+    let path = std::ffi::CString::new("/dev/shm").unwrap();
+    let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(path.as_ptr(), &mut stat) } != 0 {
+        return MAX_SHM_SIZE;
+    }
+    let available = stat.f_bavail as u64 * stat.f_frsize as u64;
+    (available / 2).min(MAX_SHM_SIZE as u64) as usize
+}
+
+#[cfg(not(target_os = "linux"))]
+fn shm_budget() -> usize {
+    MAX_SHM_SIZE
 }
 
 fn parse_done(response: &str) -> Option<(usize, bool)> {

@@ -22,6 +22,7 @@ import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
@@ -35,6 +36,13 @@ public class JPyRustBridge implements AutoCloseable {
     private static final String EMBEDDED_PYTHON_SHA256 = "009d6bf7e3b2ddca3d784fa09f90fe54336d5b60f0e0f305c37f400bf83cfd3b";
     private static final String PIP_WHEEL_URL = "https://files.pythonhosted.org/packages/8a/6a/19e9fe04fca059ccf770861c7d5721ab4c2aebc539889e97c7977528a53b/pip-24.0-py3-none-any.whl";
     private static final String PIP_WHEEL_SHA256 = "ba0d021a166865d2265246961bec0152ff124de910c5cc39f1156ce3fa7c69dc";
+    private static final String STANDALONE_RELEASE = "20261110";
+    private static final String STANDALONE_PYTHON = "3.11.18";
+    private static final Map<String, String> STANDALONE_SHA256 = Map.of(
+            "aarch64-apple-darwin", "73f1ed14486aa278d331e95f7d6d452f5cfb69d90b418e26e62fd4846d53557d",
+            "x86_64-apple-darwin", "9ff3ea8df9037e692939a3f2348f5fd760239ab8eb9d0d2d11d099457dda63a0",
+            "aarch64-unknown-linux-gnu", "623a370be4489d8c35c7a274be02f3007a030618cda29025780beb416c6c8861",
+            "x86_64-unknown-linux-gnu", "ac0b758b6ae4ba1cb87f7091eb6bb17c9a383a9bcdb5c18493cdd4f34e35ae8c");
     private static final List<String> AVAILABLE_EXTRAS = List.of("vision", "audio", "ml");
     private static final System.Logger LOGGER = System.getLogger("com.jpyrust");
 
@@ -265,13 +273,12 @@ public class JPyRustBridge implements AutoCloseable {
         Path pyExe = pythonDistDir.resolve("python.exe");
 
         if (!Files.exists(markerFile)) {
-            Path downloads = targetDir.resolve("downloads");
             Path pythonZip = download(EMBEDDED_PYTHON_URL, EMBEDDED_PYTHON_SHA256,
-                    downloads.resolve("python-3.11.9-embed-amd64.zip"));
+                    cacheDir().resolve("python-3.11.9-embed-amd64.zip"));
             NativeLoader.extractZip(pythonZip, pythonDistDir);
             Files.write(pythonDistDir.resolve("python311._pth"), "python311.zip\n.\nimport site".getBytes());
 
-            Path pipWheel = download(PIP_WHEEL_URL, PIP_WHEEL_SHA256, downloads.resolve("pip-24.0-py3-none-any.whl"));
+            Path pipWheel = download(PIP_WHEEL_URL, PIP_WHEEL_SHA256, cacheDir().resolve("pip-24.0-py3-none-any.whl"));
             NativeLoader.extractZip(pipWheel, pythonDistDir.resolve("Lib/site-packages"));
             runOrFail("Failed to pre-install setuptools/wheel in " + pythonDistDir, targetDir,
                     pyExe.toString(), "-m", "pip", "install", "setuptools<70", "wheel");
@@ -287,8 +294,47 @@ public class JPyRustBridge implements AutoCloseable {
         this.pythonExe = pyExe;
     }
 
+    private static Path cacheDir() {
+        return Paths.get(System.getProperty("user.home"), ".jpyrust", "cache");
+    }
+
+    private Path standalonePython() throws Exception {
+        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+        String triple = NativeLoader.normalizeArch(System.getProperty("os.arch"))
+                + (os.contains("mac") ? "-apple-darwin" : "-unknown-linux-gnu");
+        String sha256 = STANDALONE_SHA256.get(triple);
+        if (sha256 == null) {
+            throw new JPyRustException("No Python download for " + triple + "; pass python(Path) to use an installed interpreter");
+        }
+        String name = "cpython-" + STANDALONE_PYTHON + "+" + STANDALONE_RELEASE + "-" + triple + "-install_only";
+        Path home = cacheDir().resolve(name);
+        Path python = home.resolve("python/bin/python3");
+        if (Files.exists(python)) {
+            return python;
+        }
+        Path archive = download("https://github.com/astral-sh/python-build-standalone/releases/download/"
+                + STANDALONE_RELEASE + "/" + name.replace("+", "%2B") + ".tar.gz", sha256, cacheDir().resolve(name + ".tar.gz"));
+        Path staging = Files.createTempDirectory(cacheDir(), "extract-");
+        runOrFail("Failed to extract " + archive, cacheDir(), "tar", "-xzf", archive.toString(), "-C", staging.toString());
+        try {
+            Files.move(staging, home, StandardCopyOption.ATOMIC_MOVE);
+        } catch (java.nio.file.FileSystemException e) {
+            if (!Files.exists(python)) {
+                throw e;
+            }
+            try (var paths = Files.walk(staging)) {
+                paths.sorted(java.util.Comparator.reverseOrder()).forEach(path -> path.toFile().delete());
+            }
+        }
+        Files.deleteIfExists(archive);
+        return python;
+    }
+
     private Path download(String url, String expectedSha256, Path target) throws Exception {
         Files.createDirectories(target.getParent());
+        if (Files.exists(target) && sha256Hex(Files.readAllBytes(target)).equals(expectedSha256)) {
+            return target;
+        }
         log("INFO", "Downloading " + url);
         HttpClient client = HttpClient.newBuilder()
                 .followRedirects(HttpClient.Redirect.NORMAL)
@@ -331,8 +377,8 @@ public class JPyRustBridge implements AutoCloseable {
                 runOrFail("Failed to create venv with " + pythonInterpreter + " at: " + venvDir, targetDir,
                         pythonInterpreter.toString(), "-m", "venv", "--system-site-packages", venvDir.toString());
             } else {
-                runOrFail("Failed to create Python 3.11 venv via uv at: " + venvDir, targetDir,
-                        findUv(), "venv", "--python", "3.11", "--seed", venvDir.toString());
+                runOrFail("Failed to create Python " + STANDALONE_PYTHON + " venv at: " + venvDir, targetDir,
+                        standalonePython().toString(), "-m", "venv", venvDir.toString());
             }
 
             // openai-whisper ships no wheel on PyPI (sdist only), and its legacy setup.py
@@ -369,20 +415,6 @@ public class JPyRustBridge implements AutoCloseable {
         }
 
         this.pythonExe = venvPython;
-    }
-
-    private String findUv() {
-        try {
-            Process p = new ProcessBuilder("uv", "--version").redirectErrorStream(true).start();
-            drainQuietly(p);
-            if (p.waitFor() == 0) {
-                return "uv";
-            }
-        } catch (Exception ignored) {
-        }
-        throw new RuntimeException(
-                "uv가 설치되어 있지 않습니다. https://docs.astral.sh/uv/getting-started/installation/ 를 참고해 설치 후 다시 시도하세요.\n"
-                        + "  macOS/Linux: curl -LsSf https://astral.sh/uv/install.sh | sh");
     }
 
     private void drainQuietly(Process process) throws Exception {

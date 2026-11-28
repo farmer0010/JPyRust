@@ -34,7 +34,7 @@
 ### 🌟 왜 JPyRust인가요?
 * 🚀 **Zero-Latency (지연 없음)**: 느린 HTTP/Socket 대신 시스템 RAM(공유 메모리)을 직접 사용하여 데이터 교환.
 * 🔄 **완벽한 병렬성 (True Parallelism)**: v1.3.0부터 **멀티 인스턴스** 아키텍처를 지원하여, 하나의 Java 앱이 여러 개의 독립적인 Python 프로세스를 동시에 제어할 수 있습니다.
-* 🛠️ **Zero-Config (설정 불필요)**: 첫 실행 시 Python 환경을 자동으로 구성합니다 — Windows는 공식 임베디드(embeddable) Python, macOS/Linux는 `uv`가 관리하는 venv. 수동 `pip install` 필요 없습니다. 모든 플랫폼에서 인터프리터 자체도 첫 실행 시 네트워크로 자동 다운로드됩니다(Windows는 python.org의 임베디드 Python 3.11.9, ~11MB / macOS·Linux는 `uv`가 이식 가능한 Python 3.11을 fetch, ~25MB) — 시스템에 이미 설치돼 있는 것을 전제하지 않습니다.
+* 🛠️ **Zero-Config (설정 불필요)**: 첫 실행 시 Python 환경을 자동으로 구성합니다 — Windows는 python.org의 임베디드 Python 3.11.9(~11MB), macOS/Linux는 [python-build-standalone](https://github.com/astral-sh/python-build-standalone)의 체크섬 검증된 포터블 CPython 3.11.18(~26MB)을 씁니다. Python을 포함해 미리 설치할 것이 없고, 내려받은 파일은 `~/.jpyrust/cache`에 캐시돼 모든 인스턴스가 함께 씁니다.
 * 🛡️ **Crash-Proof (충돌 방지)**: Rust가 Python 프로세스의 상태를 실시간 감시하며, 충돌 발생 시 즉시 워커를 자동 재시작합니다.
 
 ---
@@ -252,10 +252,10 @@ byte[] raw = bridge.call("WORD_COUNT", bytes, "any args here");  // 바이트 �
 <summary><strong>🐍 3. Python 의존성 문제</strong></summary>
 
 * **Windows:** 첫 `initialize()` 때 python.org의 임베디드 Python 3.11.9와 버전이 고정된 `pip` wheel을 내려받아 라이브러리에 들어 있는 SHA-256 해시로 검증한 뒤, `~/.jpyrust/<instanceId>/python_dist`에 풀고 PyPI에서 `requirements.txt`와 켠 extra를 설치합니다. 따로 설치할 것은 없지만 첫 실행에는 python.org와 PyPI에 접속할 수 있어야 합니다(다운로드는 `https.proxyHost`, pip은 `HTTPS_PROXY`를 따름). 인스턴스 디렉터리당 한 번만 실행되며(`python_dist/.installed`로 추적), 다운로드 실패·체크섬 불일치·pip 오류가 나면 `initialize()`가 예외를 던집니다.
-* **macOS / Linux:** 이 플랫폼용 포터블 임베디드 Python은 없어서, `PATH`에 [`uv`](https://docs.astral.sh/uv/getting-started/installation/)가 있어야 하며 `uv venv --python 3.11 --seed`로 `~/.jpyrust/<instanceId>/venv`에 전용 venv를 만들어 `requirements.txt`를 설치합니다. `uv`가 관리하는 Python 3.11이 아직 없으면 첫 실행 시 자동으로 다운로드합니다 — 인터프리터를 수동으로 설치할 필요가 없습니다. 인스턴스 디렉터리당 한 번만 실행되며(`.installed` 마커로 추적), 새로 설치하려면 해당 디렉터리를 지우면 됩니다. `uv` 설치: `curl -LsSf https://astral.sh/uv/install.sh | sh` 또는 macOS에서는 `brew install uv`.
+* **macOS / Linux:** 첫 `initialize()` 때 OS와 아키텍처(x86_64/aarch64, glibc)에 맞는 python-build-standalone의 포터블 CPython 3.11.18을 내려받아, 라이브러리에 들어 있는 SHA-256 해시로 검증하고 `~/.jpyrust/cache`에 풉니다. 그다음 `~/.jpyrust/<instanceId>/venv`에 전용 venv를 만들고 `requirements.txt`를 설치합니다. 미리 설치할 것은 없습니다(`tar`만 있으면 되는데, macOS와 주요 Linux에는 기본으로 있습니다). venv는 인스턴스 디렉터리당 한 번만 만들며(`.installed` 마커로 추적), 새로 설치하려면 해당 디렉터리를 지우면 됩니다. Alpine(musl)은 지원하지 않으니 `python(...)`을 쓰세요.
 * 내장 작업이 `requires extras(...)` 오류를 내면 `extras(...)`로 해당 extra를 켜세요.
-* **오프라인 / 사내망:** `python(Path.of("/usr/bin/python3.11"))`을 지정하면 `uv`나 python.org 다운로드 대신 이미 있는 인터프리터로 venv를 만듭니다(`python -m venv --system-site-packages`). 모든 OS에서 동작합니다. 그 인터프리터에 이미 설치된 패키지는 그대로 쓰므로, pip은 빠진 것만 내려받습니다. 사내 패키지 저장소는 표준 `PIP_INDEX_URL` / `PIP_TRUSTED_HOST` 환경 변수나 `pip.conf`로 지정하면 pip 자식 프로세스가 그대로 이어받습니다. 인터프리터는 인스턴스 디렉터리를 처음 구성할 때 정해지므로, 바꾸려면 새 디렉터리를 쓰세요.
-* **Docker:** 배포되는 베이스 이미지엔 Python도 `uv`도 없어서 그 안에서는 AI 추론 기능이 동작하지 않습니다. 직접 만드는 이미지에 Python을 설치하고 `python(...)`으로 넘기세요.
+* **오프라인 / 사내망:** `python(Path.of("/usr/bin/python3.11"))`을 지정하면 내려받는 대신 이미 있는 인터프리터로 venv를 만듭니다(`python -m venv --system-site-packages`). 모든 OS에서 동작합니다. 그 인터프리터에 이미 설치된 패키지는 그대로 쓰므로, pip은 빠진 것만 내려받습니다. 사내 패키지 저장소는 표준 `PIP_INDEX_URL` / `PIP_TRUSTED_HOST` 환경 변수나 `pip.conf`로 지정하면 pip 자식 프로세스가 그대로 이어받습니다. 인터프리터는 인스턴스 디렉터리를 처음 구성할 때 정해지므로, 바꾸려면 새 디렉터리를 쓰세요.
+* **Docker:** glibc 기반 이미지(예: `eclipse-temurin`)는 그대로 동작합니다. 첫 `initialize()`가 컨테이너 안으로 Python을 내려받습니다. 빌드 때 미리 넣으려면 `RUN` 단계에서 앱 초기화를 한 번 돌리거나, 이미지에 Python을 설치하고 `python(...)`으로 넘기세요. Docker 기본 `/dev/shm`(64MB)이 공유 메모리 버퍼 크기를 제한하며, 그보다 큰 데이터는 자동으로 파일로 넘어갑니다. 한도는 `--shm-size`로 늘릴 수 있습니다.
 * **로깅:** JPyRust는 `System.Logger`(로거 이름 `com.jpyrust`)로 로그를 남깁니다. 기본은 `java.util.logging`이고, SLF4J/Log4j의 `System.Logger` 브리지가 클래스패스에 있으면 그쪽으로 갑니다. pip 출력은 `DEBUG` 레벨입니다.
 </details>
 

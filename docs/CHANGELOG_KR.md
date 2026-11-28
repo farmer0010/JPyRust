@@ -1,6 +1,7 @@
 # 변경 이력
 
 * **Unreleased**
+    * **동작 변경:** macOS와 Linux에 `uv`가 더 이상 필요 없습니다. 첫 `initialize()`가 OS·아키텍처에 맞는 python-build-standalone의 포터블 CPython 3.11.18을 내려받아 SHA-256을 검증하고 그걸로 venv를 만듭니다. 내려받은 파일(Windows Python zip과 pip wheel 포함)은 `~/.jpyrust/cache`에 캐시돼 인스턴스끼리 함께 씁니다. glibc 기반 Docker 이미지에서도 추가 설정 없이 AI 작업이 돌아갑니다.
     * **기능:** `workers(n)`으로 브리지 하나 뒤에 Python 프로세스 `n`개를 띄웁니다. 여러 스레드의 호출이 병렬로 돌아서, CPU를 쓰는 Python 코드가 더 이상 GIL 하나에 묶여 줄 서지 않습니다. `callAsync(task, bytes, args)`는 `CompletableFuture`를 돌려줍니다.
     * **기능:** `timeouts(startup, task)`, `model(path, confidence)`, `whisperModel(path)`로 `initialize()` 전에 설정합니다. 긴 `initialize(...)` 오버로드를 대신하며, 기존 오버로드도 그대로 동작합니다.
     * **동작 변경:** 실패는 `JPyRustException` 계층으로 옵니다. `TaskFailedException`(Python 작업이 예외를 냄), `WorkerTimeoutException`(타임아웃 초과, 워커 재시작), `WorkerCrashedException`(세그폴트 등으로 워커가 죽음)이며 모두 `RuntimeException`입니다. `processEdgeDetection`, `processNlp`, `processRegression`도 `null`이나 `{"error": ...}` 문자열 대신 다른 호출처럼 예외를 던집니다.

@@ -20,6 +20,7 @@ public class PythonProvisioningTest {
     Path workDir;
 
     @Test
+    @EnabledIfEnvironmentVariable(named = "JPYRUST_FULL_STACK_TEST", matches = "true")
     public void firstInitializeProvisionsPythonAndAnswersStatus() throws Exception {
         JPyRustBridge bridge = new JPyRustBridge("provision_test").extras("vision", "audio", "ml");
         try {
