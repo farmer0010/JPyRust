@@ -12,7 +12,8 @@
 | macOS Intel | Yes | Built only (cross-compiled, no Intel runner) |
 | Windows x86_64 | Yes | `windows-latest`, with a real Python worker and the full `vision`/`audio`/`ml` install |
 | Linux musl (Alpine) | No native library yet | — |
-| Python (downloaded) | CPython 3.11.18 on macOS/Linux, 3.11.9 on Windows | Every Java test job |
+| Python (downloaded) | CPython 3.11.18 (default), 3.12.16, 3.13.18 or 3.14.10 via `pythonVersion(...)`, on every OS | 3.11 in every Java test job; switching 3.12 → 3.13 → 3.14 in every Java test job |
+| Built-in extras (`vision`, `audio`, `ml`) | Python 3.11 and 3.12 | 3.11, full install on Windows |
 | Python (`python(Path)`) | 3.11 tested; other CPython 3.x with `venv` and `pip` should work, but the built-in extras pin wheels for 3.11 | Windows job (setup-python 3.11) |
 
 The JitPack build carries natives for Linux x86_64, macOS Apple Silicon and Windows x86_64. The JAR attached to each GitHub Release carries all five.

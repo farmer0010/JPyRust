@@ -40,7 +40,7 @@
 지연 시간은 Apple M5에서 돌린 [JMH 벤치마크](BENCHMARKS.md) 결과이며, 같은 프로세스 방식은 측정하지 않았습니다.
 
 ### 🌟 왜 JPyRust인가요?
-* 📦 **의존성 하나, 설치 불필요**: Windows는 python.org의 임베디드 Python 3.11.9, macOS/Linux는 [python-build-standalone](https://github.com/astral-sh/python-build-standalone)의 체크섬 검증된 CPython 3.11.18을 쓰며 `~/.jpyrust/cache`에 캐시합니다. glibc 기반 Docker 이미지에서도 그대로 동작합니다.
+* 📦 **의존성 하나, 설치 불필요**: 모든 OS에서 [python-build-standalone](https://github.com/astral-sh/python-build-standalone)의 체크섬 검증된 CPython을 씁니다. 기본은 3.11이고 `pythonVersion(...)`으로 3.12~3.14를 고를 수 있으며, `~/.jpyrust/cache`에 캐시합니다. glibc 기반 Docker 이미지에서도 그대로 동작합니다.
 * 🛡️ **장애 격리**: 세그폴트, `os._exit`, 멈춘 작업은 `WorkerCrashedException` / `WorkerTimeoutException`이 되고 워커가 다시 뜹니다. JVM이 같이 죽지 않습니다.
 * 🚀 **공유 메모리 IPC**: 입출력이 재사용하는 공유 메모리 버퍼로 오가며, 측정한 크기(16B~1MB)에서 루프백 HTTP 호출보다 3.7~6.3배 빠릅니다.
 * 🔄 **멀티코어 Python**: `workers(4)`는 브리지 하나 뒤에 Python 프로세스 4개를 띄웁니다. CPU를 쓰는 코드에서 워커 1개보다 처리량이 3.2배이고, GIL 하나에 묶인 구조로는 할 수 없는 일입니다.
@@ -258,8 +258,8 @@ public class SpeechService {
 <details>
 <summary><strong>🐍 3. Python 의존성 문제</strong></summary>
 
-* **Windows:** 첫 `initialize()` 때 python.org의 임베디드 Python 3.11.9와 버전이 고정된 `pip` wheel을 내려받아 라이브러리에 들어 있는 SHA-256 해시로 검증한 뒤, `~/.jpyrust/<instanceId>/python_dist`에 풀고 PyPI에서 `requirements.txt`와 켠 extra를 설치합니다. 따로 설치할 것은 없지만 첫 실행에는 python.org와 PyPI에 접속할 수 있어야 합니다(다운로드는 `https.proxyHost`, pip은 `HTTPS_PROXY`를 따름). 인스턴스 디렉터리당 한 번만 실행되며(`python_dist/.installed`로 추적), 다운로드 실패·체크섬 불일치·pip 오류가 나면 `initialize()`가 예외를 던집니다.
-* **macOS / Linux:** 첫 `initialize()` 때 OS와 아키텍처(x86_64/aarch64, glibc)에 맞는 python-build-standalone의 포터블 CPython 3.11.18을 내려받아, 라이브러리에 들어 있는 SHA-256 해시로 검증하고 `~/.jpyrust/cache`에 풉니다. 그다음 `~/.jpyrust/<instanceId>/venv`에 전용 venv를 만들고 `requirements.txt`를 설치합니다. 미리 설치할 것은 없습니다(`tar`만 있으면 되는데, macOS와 주요 Linux에는 기본으로 있습니다). venv는 인스턴스 디렉터리당 한 번만 만들며(`.installed` 마커로 추적), 새로 설치하려면 해당 디렉터리를 지우면 됩니다. Alpine(musl)은 지원하지 않으니 `python(...)`을 쓰세요.
+* **모든 OS:** 첫 `initialize()` 때 OS와 아키텍처(Windows x86_64, macOS와 glibc Linux의 x86_64/aarch64)에 맞는 python-build-standalone의 포터블 CPython을 내려받아, 라이브러리에 들어 있는 SHA-256 해시로 검증하고 `~/.jpyrust/cache`에 풉니다. 그다음 `~/.jpyrust/<instanceId>/venv`에 전용 venv를 만들고 `requirements.txt`와 켠 extra를 설치합니다. 미리 설치할 것은 없지만(`tar`만 있으면 되는데, Windows 10 이상·macOS·주요 Linux에는 기본으로 있습니다) 첫 실행에는 GitHub와 PyPI에 접속할 수 있어야 합니다(다운로드는 `https.proxyHost`, pip은 `HTTPS_PROXY`를 따름). venv는 인스턴스 디렉터리당 한 번만 만들며(`.installed` 마커로 추적), 새로 설치하려면 해당 디렉터리를 지우면 됩니다. 다운로드 실패·체크섬 불일치·pip 오류가 나면 `initialize()`가 예외를 던집니다. Alpine(musl)은 지원하지 않으니 `python(...)`을 쓰세요.
+* **Python 버전:** `pythonVersion("3.13")`으로 CPython 3.11(기본), 3.12, 3.13, 3.14 중 하나를 고릅니다. 바꾸면 다음 `initialize()` 때 인스턴스의 venv를 다시 만듭니다. 기본 의존성은 3.11~3.12에서 `numpy` 1.26.4, 3.13 이상에서 2.3.5로 고정돼 있습니다. 내장 extras는 3.11~3.12용 wheel로 고정돼 있어, 3.13 이상에서 `extras(...)`를 쓰면 아무것도 내려받기 전에 실패합니다.
 * 내장 작업이 `requires extras(...)` 오류를 내면 `extras(...)`로 해당 extra를 켜세요.
 * **오프라인 / 사내망:** `python(Path.of("/usr/bin/python3.11"))`을 지정하면 내려받는 대신 이미 있는 인터프리터로 venv를 만듭니다(`python -m venv --system-site-packages`). 모든 OS에서 동작합니다. 그 인터프리터에 이미 설치된 패키지는 그대로 쓰므로, pip은 빠진 것만 내려받습니다. 사내 패키지 저장소는 표준 `PIP_INDEX_URL` / `PIP_TRUSTED_HOST` 환경 변수나 `pip.conf`로 지정하면 pip 자식 프로세스가 그대로 이어받습니다. 인터프리터는 인스턴스 디렉터리를 처음 구성할 때 정해지므로, 바꾸려면 새 디렉터리를 쓰세요.
 * **Docker:** glibc 기반 이미지(예: `eclipse-temurin`)는 그대로 동작합니다. 첫 `initialize()`가 컨테이너 안으로 Python을 내려받습니다. 빌드 때 미리 넣으려면 `RUN` 단계에서 앱 초기화를 한 번 돌리거나, 이미지에 Python을 설치하고 `python(...)`으로 넘기세요. Docker 기본 `/dev/shm`(64MB)이 공유 메모리 버퍼 크기를 제한하며, 그보다 큰 데이터는 자동으로 파일로 넘어갑니다. 한도는 `--shm-size`로 늘릴 수 있습니다.

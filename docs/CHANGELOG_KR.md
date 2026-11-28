@@ -1,5 +1,9 @@
 # 변경 이력
 
+* **Unreleased**
+    * **기능:** `pythonVersion("3.12")`로 내려받을 CPython을 고릅니다. 3.11(기본), 3.12, 3.13, 3.14 중 하나이며 Spring starter에서는 `jpyrust.python-version`입니다. 바꾸면 인스턴스의 venv를 다시 만듭니다. 기본 의존성은 3.11~3.12에서 `numpy` 1.26.4, 3.13 이상에서 2.3.5로 고정하고, 내장 extras는 3.11~3.12에서만 설치되며 그보다 새 버전에서는 바로 실패합니다.
+    * **동작 변경:** Windows도 python.org의 임베디드 3.11.9와 pip wheel 대신 python-build-standalone의 CPython 3.11.18을 내려받아 macOS·Linux와 같은 방식으로 venv를 만듭니다. 기존 Windows 인스턴스 디렉터리는 다음 `initialize()` 때 한 번 다시 설치됩니다.
+
 * **v2.0.1**
     * **수정:** `jpyrust-spring-boot-starter`가 Spring Boot 4에서도 `jpyRust` 헬스 체크와 `jpyrust.calls` 타이머를 등록합니다. Boot 4에서 health·metrics 클래스의 패키지가 바뀌어, 4.x에서는 호출은 되지만 둘 다 조용히 빠져 있었습니다. 이제 starter를 Boot 3.2.1과 4.2.0에서 모두 테스트합니다.
     * **기타:** `windows-sys` 0.61, GitHub Actions 버전 업데이트, 쓰지 않는 `lazy_static` 의존성 제거. 예제와 `demo-web`은 Spring Boot 4.2를 씁니다.

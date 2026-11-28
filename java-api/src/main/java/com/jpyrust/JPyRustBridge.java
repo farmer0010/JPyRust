@@ -32,17 +32,35 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class JPyRustBridge implements AutoCloseable {
 
-    private static final String EMBEDDED_PYTHON_URL = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip";
-    private static final String EMBEDDED_PYTHON_SHA256 = "009d6bf7e3b2ddca3d784fa09f90fe54336d5b60f0e0f305c37f400bf83cfd3b";
-    private static final String PIP_WHEEL_URL = "https://files.pythonhosted.org/packages/8a/6a/19e9fe04fca059ccf770861c7d5721ab4c2aebc539889e97c7977528a53b/pip-24.0-py3-none-any.whl";
-    private static final String PIP_WHEEL_SHA256 = "ba0d021a166865d2265246961bec0152ff124de910c5cc39f1156ce3fa7c69dc";
     private static final String STANDALONE_RELEASE = "20261110";
-    private static final String STANDALONE_PYTHON = "3.11.18";
-    private static final Map<String, String> STANDALONE_SHA256 = Map.of(
-            "aarch64-apple-darwin", "73f1ed14486aa278d331e95f7d6d452f5cfb69d90b418e26e62fd4846d53557d",
-            "x86_64-apple-darwin", "9ff3ea8df9037e692939a3f2348f5fd760239ab8eb9d0d2d11d099457dda63a0",
-            "aarch64-unknown-linux-gnu", "623a370be4489d8c35c7a274be02f3007a030618cda29025780beb416c6c8861",
-            "x86_64-unknown-linux-gnu", "ac0b758b6ae4ba1cb87f7091eb6bb17c9a383a9bcdb5c18493cdd4f34e35ae8c");
+    private static final String DEFAULT_PYTHON_VERSION = "3.11";
+    private static final Map<String, String> STANDALONE_PYTHON = Map.of(
+            "3.11", "3.11.18",
+            "3.12", "3.12.16",
+            "3.13", "3.13.18",
+            "3.14", "3.14.10");
+    private static final List<String> EXTRAS_PYTHON_VERSIONS = List.of("3.11", "3.12");
+    private static final Map<String, String> STANDALONE_SHA256 = Map.ofEntries(
+            Map.entry("3.11.18-aarch64-apple-darwin", "73f1ed14486aa278d331e95f7d6d452f5cfb69d90b418e26e62fd4846d53557d"),
+            Map.entry("3.11.18-x86_64-apple-darwin", "9ff3ea8df9037e692939a3f2348f5fd760239ab8eb9d0d2d11d099457dda63a0"),
+            Map.entry("3.11.18-aarch64-unknown-linux-gnu", "623a370be4489d8c35c7a274be02f3007a030618cda29025780beb416c6c8861"),
+            Map.entry("3.11.18-x86_64-unknown-linux-gnu", "ac0b758b6ae4ba1cb87f7091eb6bb17c9a383a9bcdb5c18493cdd4f34e35ae8c"),
+            Map.entry("3.11.18-x86_64-pc-windows-msvc", "5ca7e23bbcc8933a75f4ae9c3a5e5d1ffae5fd143aec9a9d77cf5124cc6e0eef"),
+            Map.entry("3.12.16-aarch64-apple-darwin", "e956e60bc9465d577ef8062059aa05cd3a2665b4b8678a2ed24e432368330b8f"),
+            Map.entry("3.12.16-x86_64-apple-darwin", "83f2922437e6d546d0fcdb8c11f150a8e52787e8d9ea8651b1974e20908eb1bc"),
+            Map.entry("3.12.16-aarch64-unknown-linux-gnu", "4792f81750282597fb2a3389fe18b945ed2ba6aad5e45ad406d122c58cb33081"),
+            Map.entry("3.12.16-x86_64-unknown-linux-gnu", "c2f87d4b4e8db3abddb0f116c6ccfc503d0cbdbb9ee8faacddad1b679ec12e99"),
+            Map.entry("3.12.16-x86_64-pc-windows-msvc", "e23fe5b16926de1d81661b1a97352e89fb167549c55a6825796ccd0f32ec7f1b"),
+            Map.entry("3.13.18-aarch64-apple-darwin", "1afd3983237c2a10277345f235be730e9cb49a123e0574ed252dbf3a841a24e4"),
+            Map.entry("3.13.18-x86_64-apple-darwin", "a46bcdeecd28ba253522b321dcb3806da1b0ff581479fc1d27e9613e3ac44764"),
+            Map.entry("3.13.18-aarch64-unknown-linux-gnu", "d25a65036d5e149db902fa52ad65878d0c00e9301360ec197832f99063087e9e"),
+            Map.entry("3.13.18-x86_64-unknown-linux-gnu", "50c774f6674740739f791c05a9177ed03e2fe02abebda9bca3512eb7309b37cc"),
+            Map.entry("3.13.18-x86_64-pc-windows-msvc", "7e93813bd362c6413f30788b248590e2f169df2d17dcac81aafbcc7a6eeb542c"),
+            Map.entry("3.14.10-aarch64-apple-darwin", "42031ed5f0d38777335252c8c77d64708c8010dd67c128246bdec25000672666"),
+            Map.entry("3.14.10-x86_64-apple-darwin", "f6c82fcf867b4aaadd373ac97699ad95fbb9c96f9ecf9b25775943aa5458b87f"),
+            Map.entry("3.14.10-aarch64-unknown-linux-gnu", "e59f83159984a55e719bb3805a0b2b5b281f645769222218084b78b92eedc07f"),
+            Map.entry("3.14.10-x86_64-unknown-linux-gnu", "3fe0d7c0538eb5d190c34582992d26230532551355cbd789fabc6591621cfc07"),
+            Map.entry("3.14.10-x86_64-pc-windows-msvc", "b9bee0a6f590914a495a8305701951e543b4475bb620d11661b49052b990456b"));
     private static final List<String> AVAILABLE_EXTRAS = List.of("vision", "audio", "ml");
     private static final System.Logger LOGGER = System.getLogger("com.jpyrust");
 
@@ -61,6 +79,7 @@ public class JPyRustBridge implements AutoCloseable {
     private Path pythonExe;
     private Path requirementsFile;
     private Path pythonInterpreter;
+    private String pythonVersion = DEFAULT_PYTHON_VERSION;
     private final List<Path> moduleDirs = new ArrayList<>();
     private final List<String> extras = new ArrayList<>();
     private String modelPath = "yolov8n.pt";
@@ -93,6 +112,16 @@ public class JPyRustBridge implements AutoCloseable {
     public synchronized JPyRustBridge python(Path interpreter) {
         requireNotInitialized("python");
         this.pythonInterpreter = interpreter;
+        return this;
+    }
+
+    public synchronized JPyRustBridge pythonVersion(String version) {
+        requireNotInitialized("pythonVersion");
+        if (!STANDALONE_PYTHON.containsKey(version)) {
+            throw new IllegalArgumentException("Unsupported Python version: " + version
+                    + " (supported: " + STANDALONE_PYTHON.keySet().stream().sorted().toList() + ")");
+        }
+        this.pythonVersion = version;
         return this;
     }
 
@@ -214,6 +243,11 @@ public class JPyRustBridge implements AutoCloseable {
 
     private void setupEmbeddedPython(Path targetDir) throws Exception {
         boolean isWindows = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
+        if (!extras.isEmpty() && pythonInterpreter == null && !EXTRAS_PYTHON_VERSIONS.contains(pythonVersion)) {
+            throw new IllegalStateException("extras " + extras + " pin packages for Python "
+                    + String.join(" and ", EXTRAS_PYTHON_VERSIONS) + "; pythonVersion(\"" + pythonVersion
+                    + "\") cannot install them");
+        }
 
         NativeLoader.extractFile("/ai_worker.py", targetDir.resolve("ai_worker.py"));
         NativeLoader.extractFile("/jpyrust.py", targetDir.resolve("jpyrust.py"));
@@ -232,11 +266,8 @@ public class JPyRustBridge implements AutoCloseable {
         writeWorkerConfig(targetDir.resolve("worker.json"));
         String requirementsHash = sha256Hex(Files.readAllBytes(requirements));
 
-        if (isWindows && pythonInterpreter == null) {
-            setupWindowsEmbeddedPython(targetDir, requirementsHash);
-        } else {
-            setupVenvPython(targetDir, requirementsHash, isWindows);
-        }
+        deleteRecursively(targetDir.resolve("python_dist"));
+        setupVenvPython(targetDir, requirementsHash, isWindows);
     }
 
     private void writeWorkerConfig(Path configFile) throws Exception {
@@ -267,48 +298,24 @@ public class JPyRustBridge implements AutoCloseable {
         return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(data));
     }
 
-    private void setupWindowsEmbeddedPython(Path targetDir, String requirementsHash) throws Exception {
-        Path pythonDistDir = targetDir.resolve("python_dist");
-        Path markerFile = pythonDistDir.resolve(".installed");
-        Path pyExe = pythonDistDir.resolve("python.exe");
-
-        if (!Files.exists(markerFile)) {
-            Path pythonZip = download(EMBEDDED_PYTHON_URL, EMBEDDED_PYTHON_SHA256,
-                    cacheDir().resolve("python-3.11.9-embed-amd64.zip"));
-            NativeLoader.extractZip(pythonZip, pythonDistDir);
-            Files.write(pythonDistDir.resolve("python311._pth"), "python311.zip\n.\nimport site".getBytes());
-
-            Path pipWheel = download(PIP_WHEEL_URL, PIP_WHEEL_SHA256, cacheDir().resolve("pip-24.0-py3-none-any.whl"));
-            NativeLoader.extractZip(pipWheel, pythonDistDir.resolve("Lib/site-packages"));
-            runOrFail("Failed to pre-install setuptools/wheel in " + pythonDistDir, targetDir,
-                    pyExe.toString(), "-m", "pip", "install", "setuptools<70", "wheel");
-        }
-
-        if (!isInstalled(markerFile, requirementsHash)) {
-            runOrFail("pip install failed for requirements.txt in " + pythonDistDir, targetDir,
-                    pyExe.toString(), "-m", "pip", "install", "--no-build-isolation",
-                    "-r", targetDir.resolve("requirements.txt").toString());
-            Files.writeString(markerFile, requirementsHash);
-        }
-
-        this.pythonExe = pyExe;
-    }
-
     private static Path cacheDir() {
         return Paths.get(System.getProperty("user.home"), ".jpyrust", "cache");
     }
 
     private Path standalonePython() throws Exception {
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
-        String triple = NativeLoader.normalizeArch(System.getProperty("os.arch"))
-                + (os.contains("mac") ? "-apple-darwin" : "-unknown-linux-gnu");
-        String sha256 = STANDALONE_SHA256.get(triple);
+        boolean isWindows = os.contains("win");
+        String arch = NativeLoader.normalizeArch(System.getProperty("os.arch"));
+        String triple = arch + (isWindows ? "-pc-windows-msvc" : os.contains("mac") ? "-apple-darwin" : "-unknown-linux-gnu");
+        String version = STANDALONE_PYTHON.get(pythonVersion);
+        String sha256 = STANDALONE_SHA256.get(version + "-" + triple);
         if (sha256 == null) {
-            throw new JPyRustException("No Python download for " + triple + "; pass python(Path) to use an installed interpreter");
+            throw new JPyRustException("No Python " + pythonVersion + " download for " + triple
+                    + "; pass python(Path) to use an installed interpreter");
         }
-        String name = "cpython-" + STANDALONE_PYTHON + "+" + STANDALONE_RELEASE + "-" + triple + "-install_only";
+        String name = "cpython-" + version + "+" + STANDALONE_RELEASE + "-" + triple + "-install_only";
         Path home = cacheDir().resolve(name);
-        Path python = home.resolve("python/bin/python3");
+        Path python = home.resolve(isWindows ? "python/python.exe" : "python/bin/python3");
         if (Files.exists(python)) {
             return python;
         }
@@ -322,12 +329,19 @@ public class JPyRustBridge implements AutoCloseable {
             if (!Files.exists(python)) {
                 throw e;
             }
-            try (var paths = Files.walk(staging)) {
-                paths.sorted(java.util.Comparator.reverseOrder()).forEach(path -> path.toFile().delete());
-            }
+            deleteRecursively(staging);
         }
         Files.deleteIfExists(archive);
         return python;
+    }
+
+    private static void deleteRecursively(Path dir) throws Exception {
+        if (!Files.exists(dir)) {
+            return;
+        }
+        try (var paths = Files.walk(dir)) {
+            paths.sorted(java.util.Comparator.reverseOrder()).forEach(path -> path.toFile().delete());
+        }
     }
 
     private Path download(String url, String expectedSha256, Path target) throws Exception {
@@ -372,14 +386,30 @@ public class JPyRustBridge implements AutoCloseable {
         Path venvPython = venvDir.resolve(isWindows ? "Scripts/python.exe" : "bin/python3");
         Path requirements = targetDir.resolve("requirements.txt");
 
+        Path interpreterFile = venvDir.resolve(".jpyrust-python");
+        String interpreter = pythonInterpreter != null
+                ? "path:" + pythonInterpreter.toAbsolutePath()
+                : "cpython-" + STANDALONE_PYTHON.get(pythonVersion) + "+" + STANDALONE_RELEASE;
+        if (Files.exists(markerFile) && Files.exists(venvPython) && !Files.exists(interpreterFile)) {
+            Files.writeString(interpreterFile, interpreter);
+        }
+        if (Files.exists(markerFile)
+                && !(Files.exists(interpreterFile) && Files.readString(interpreterFile).equals(interpreter))) {
+            log("INFO", "Python changed to " + interpreter + "; rebuilding " + venvDir);
+            deleteRecursively(venvDir);
+            Files.delete(markerFile);
+        }
+
         if (!Files.exists(markerFile)) {
+            deleteRecursively(venvDir);
             if (pythonInterpreter != null) {
                 runOrFail("Failed to create venv with " + pythonInterpreter + " at: " + venvDir, targetDir,
                         pythonInterpreter.toString(), "-m", "venv", "--system-site-packages", venvDir.toString());
             } else {
-                runOrFail("Failed to create Python " + STANDALONE_PYTHON + " venv at: " + venvDir, targetDir,
+                runOrFail("Failed to create Python " + pythonVersion + " venv at: " + venvDir, targetDir,
                         standalonePython().toString(), "-m", "venv", venvDir.toString());
             }
+            Files.writeString(interpreterFile, interpreter);
 
             // openai-whisper ships no wheel on PyPI (sdist only), and its legacy setup.py
             // imports pkg_resources at build time. Pip's default isolated build overlay only

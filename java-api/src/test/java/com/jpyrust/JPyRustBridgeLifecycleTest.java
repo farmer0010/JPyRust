@@ -1,13 +1,19 @@
 package com.jpyrust;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.ByteBuffer;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Duration;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 public class JPyRustBridgeLifecycleTest {
 
@@ -86,5 +92,21 @@ public class JPyRustBridgeLifecycleTest {
     public void unknownExtraIsRejected() {
         JPyRustBridge bridge = new JPyRustBridge("lifecycle_test");
         assertThrows(IllegalArgumentException.class, () -> bridge.extras("vision", "nlp"));
+    }
+
+    @Test
+    public void unsupportedPythonVersionIsRejected() {
+        JPyRustBridge bridge = new JPyRustBridge("lifecycle_test");
+        assertThrows(IllegalArgumentException.class, () -> bridge.pythonVersion("3.10"));
+        assertSame(bridge, bridge.pythonVersion("3.13"));
+    }
+
+    @Test
+    public void extrasOnPythonWithoutPinnedWheelsFailBeforeDownloading(@TempDir Path dir) {
+        JPyRustBridge bridge = new JPyRustBridge("lifecycle_test").pythonVersion("3.13").extras("ml");
+        JPyRustException error = assertThrows(JPyRustException.class, () -> bridge.initialize(dir.toString()));
+        assertInstanceOf(IllegalStateException.class, error.getCause());
+        assertTrue(error.getCause().getMessage().contains("pythonVersion(\"3.13\")"), error.getCause().getMessage());
+        assertFalse(Files.exists(dir.resolve("venv")));
     }
 }

@@ -27,7 +27,8 @@ try (JPyRustBridge bridge = new JPyRustBridge("orders")   // instance id: names 
 | `requirements(Path file)` | bundled `requirements.txt` (`numpy`) | pip requirements for the worker environment. A change re-runs `pip install` on the next `initialize()`. |
 | `extras(String... names)` | none | Adds built-in task bundles: `vision` (YOLO, EDGE_DETECT), `audio` (WHISPER), `ml` (NLP_TEXTBLOB, REGRESSION). Their requirements are appended. Unknown names throw `IllegalArgumentException`. |
 | `moduleDir(Path dir)` | none | Every `*.py` in the directory is imported at worker start. Can be called more than once. |
-| `python(Path interpreter)` | downloaded CPython 3.11 | Builds the venv from an existing interpreter (`--system-site-packages`) instead of downloading one. |
+| `pythonVersion(String version)` | `"3.11"` | CPython to download: `"3.11"`, `"3.12"`, `"3.13"` or `"3.14"`. A change rebuilds the venv on the next `initialize()`. The built-in extras need 3.11 or 3.12. |
+| `python(Path interpreter)` | downloaded CPython | Builds the venv from an existing interpreter (`--system-site-packages`) instead of downloading one. Overrides `pythonVersion`. |
 | `workers(int count)` | 1 | Number of Python processes. Calls from different threads run in parallel, one per process. |
 | `timeouts(Duration startup, Duration task)` | 600 s, 300 s | Startup covers interpreter start and module import (model loading). A task that exceeds its timeout kills the worker. |
 | `model(String path, float confidence)` | `yolov8n.pt`, 0.5 | YOLO model and threshold for the `vision` extra. |
@@ -74,3 +75,33 @@ def score(data: bytes, args: str):
 * Module-level code runs once per worker process at startup, so load models there.
 * `config` is a dict with `model`, `conf`, `whisper_model` and `device` (`cuda`, `mps` or `cpu`, detected when `torch` is installed).
 * A module that fails to import is reported on the worker's stderr and skipped; the other modules still load.
+
+## Spring Boot starter
+
+`io.github.farmer0010:jpyrust-spring-boot-starter` creates the bridge from `jpyrust.*` properties, calls `initialize()` at startup and `close()` at shutdown. It backs off when the application defines its own `JPyRustBridge` bean. Spring Boot 3.2+ and 4.x are supported.
+
+```yaml
+jpyrust:
+  instance-id: orders
+  requirements: python/requirements.txt
+  module-dirs: python/tasks
+  python-version: "3.12"
+  workers: 4
+  task-timeout: 30s
+```
+
+| Property | Default | Same as |
+| --- | --- | --- |
+| `jpyrust.instance-id` | `default` | constructor argument |
+| `jpyrust.work-dir` | `~/.jpyrust/<instance-id>` | `initialize(String)` |
+| `jpyrust.requirements` | bundled | `requirements(Path)` |
+| `jpyrust.module-dirs` | none | `moduleDir(Path)`, a list |
+| `jpyrust.extras` | none | `extras(...)`, a list |
+| `jpyrust.python-version` | `3.11` | `pythonVersion(String)` |
+| `jpyrust.python` | none | `python(Path)` |
+| `jpyrust.workers` | `1` | `workers(int)` |
+| `jpyrust.startup-timeout`, `jpyrust.task-timeout` | `600s`, `300s` | `timeouts(...)` |
+| `jpyrust.model`, `jpyrust.confidence` | `yolov8n.pt`, `0.5` | `model(...)` |
+| `jpyrust.whisper-model` | none | `whisperModel(...)` |
+
+Inject `JPyRustTemplate` for `call(...)` and `callAsync(...)`. With Micrometer on the classpath every call records the timer `jpyrust.calls` (tags `task`, `outcome`), and with Actuator `/actuator/health` gets a `jpyRust` component that sends `STATUS` to a worker.
