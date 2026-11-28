@@ -20,15 +20,21 @@ import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.NoSuchElementException;
+import java.util.Spliterator;
+import java.util.Spliterators;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 public class JPyRustBridge implements AutoCloseable {
 
@@ -474,6 +480,12 @@ public class JPyRustBridge implements AutoCloseable {
     private native byte[] executeTask(String workDir, String taskType, String requestId, String metadata,
             ByteBuffer data, int length);
 
+    private native void streamStart(String taskType, String requestId, String metadata, ByteBuffer data, int length);
+
+    private native byte[] streamNext();
+
+    private native void streamCancel();
+
     private byte[] invokeTask(String taskType, String requestId, String metadata, ByteBuffer data, int length) {
         lifecycleLock.readLock().lock();
         try {
@@ -519,9 +531,7 @@ public class JPyRustBridge implements AutoCloseable {
     }
 
     public byte[] call(String taskName, byte[] input, String args) {
-        if (args.contains("\n") || args.contains("\r")) {
-            throw new IllegalArgumentException("args must not contain line breaks");
-        }
+        requireSingleLine(args);
         ByteBuffer buffer = ByteBuffer.allocateDirect(Math.max(input.length, 1));
         buffer.put(input);
         buffer.flip();
@@ -529,9 +539,115 @@ public class JPyRustBridge implements AutoCloseable {
         return invokeTask(taskName, requestId, args, buffer, input.length);
     }
 
+    private static void requireSingleLine(String args) {
+        if (args.contains("\n") || args.contains("\r")) {
+            throw new IllegalArgumentException("args must not contain line breaks");
+        }
+    }
+
     public String call(String taskName, String input) {
         byte[] result = call(taskName, input.getBytes(java.nio.charset.StandardCharsets.UTF_8), "");
         return new String(result, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    public Stream<byte[]> callStream(String taskName, byte[] input, String args) {
+        requireSingleLine(args);
+        ByteBuffer buffer = ByteBuffer.allocateDirect(Math.max(input.length, 1));
+        buffer.put(input).flip();
+        JPyRustBridge worker;
+        lifecycleLock.readLock().lock();
+        try {
+            if (!initialized) {
+                throw new IllegalStateException("JPyRustBridge is not initialized or already closed");
+            }
+            worker = idleWorkers.take();
+            try {
+                worker.streamStart(taskName, java.util.UUID.randomUUID().toString(), args, buffer, input.length);
+            } catch (RuntimeException e) {
+                idleWorkers.add(worker);
+                throw e;
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new JPyRustException("Interrupted while waiting for a free Python worker", e);
+        } finally {
+            lifecycleLock.readLock().unlock();
+        }
+        ChunkIterator chunks = new ChunkIterator(worker);
+        return StreamSupport.stream(Spliterators.spliteratorUnknownSize(chunks, Spliterator.ORDERED | Spliterator.NONNULL),
+                false).onClose(chunks::cancel);
+    }
+
+    public Stream<String> callStream(String taskName, String input) {
+        return callStream(taskName, input.getBytes(java.nio.charset.StandardCharsets.UTF_8), "")
+                .map(chunk -> new String(chunk, java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    private final class ChunkIterator implements Iterator<byte[]> {
+
+        private final JPyRustBridge worker;
+        private byte[] pending;
+        private boolean finished;
+
+        ChunkIterator(JPyRustBridge worker) {
+            this.worker = worker;
+        }
+
+        @Override
+        public synchronized boolean hasNext() {
+            if (pending == null && !finished) {
+                pending = withWorker(worker::streamNext);
+                if (pending == null) {
+                    finish();
+                }
+            }
+            return pending != null;
+        }
+
+        @Override
+        public synchronized byte[] next() {
+            if (!hasNext()) {
+                throw new NoSuchElementException();
+            }
+            byte[] chunk = pending;
+            pending = null;
+            return chunk;
+        }
+
+        synchronized void cancel() {
+            if (finished) {
+                return;
+            }
+            pending = null;
+            try {
+                withWorker(() -> {
+                    worker.streamCancel();
+                    return null;
+                });
+            } catch (RuntimeException e) {
+                log("WARN", "Cancelling a stream failed: " + e.getMessage());
+            }
+            finish();
+        }
+
+        private <T> T withWorker(java.util.function.Supplier<T> action) {
+            lifecycleLock.readLock().lock();
+            try {
+                return action.get();
+            } catch (RuntimeException e) {
+                finish();
+                throw e;
+            } finally {
+                lifecycleLock.readLock().unlock();
+            }
+        }
+
+        private void finish() {
+            if (!finished) {
+                finished = true;
+                idleWorkers.add(worker);
+            }
+        }
     }
 
     public NDArray call(String taskName, NDArray input, String args) {

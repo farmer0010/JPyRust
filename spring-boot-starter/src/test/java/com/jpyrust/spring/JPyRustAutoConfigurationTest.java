@@ -50,8 +50,11 @@ class JPyRustAutoConfigurationTest {
                 .run(context -> {
                     JPyRustTemplate template = context.getBean(JPyRustTemplate.class);
                     assertThat(template.call("ECHO", "hello")).isEqualTo("hello");
+                    try (var chunks = template.callStream("ECHO", "streamed")) {
+                        assertThat(chunks.toList()).containsExactly("streamed");
+                    }
                     assertThat(context.getBean(MeterRegistry.class).get("jpyrust.calls")
-                            .tag("task", "ECHO").tag("outcome", "success").timer().count()).isEqualTo(1);
+                            .tag("task", "ECHO").tag("outcome", "success").timer().count()).isEqualTo(2);
                     assertThat(context.getBean("jpyRustHealthIndicator", HealthIndicator.class).health().getStatus())
                             .isEqualTo(Status.UP);
                 });
