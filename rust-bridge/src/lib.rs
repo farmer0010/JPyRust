@@ -606,7 +606,7 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_closeNative<'local>(
 
 #[cfg(target_os = "windows")]
 struct CustomShmem {
-    handle: isize,
+    handle: windows_sys::Win32::Foundation::HANDLE,
     map_ptr: *mut u8,
     size: usize,
 }
@@ -636,7 +636,7 @@ impl Drop for CustomShmem {
                 let addr = MEMORY_MAPPED_VIEW_ADDRESS { Value: self.map_ptr as *mut std::ffi::c_void };
                 UnmapViewOfFile(addr);
             }
-            if self.handle != 0 {
+            if !self.handle.is_null() {
                 CloseHandle(self.handle);
             }
         }
@@ -669,7 +669,7 @@ fn create_shmem_permissive(name: &str, size: usize) -> Result<CustomShmem, Strin
         let h_map = CreateFileMappingW(INVALID_HANDLE_VALUE, &mut sa, PAGE_READWRITE, 0, size as u32, name_wide.as_ptr());
         LocalFree(sd);
 
-        if h_map == 0 {
+        if h_map.is_null() {
             let err = GetLastError();
             eprintln!("[JPyRust-Native] CreateFileMappingW failed: error {}", err);
             return Err(format!("Mapping failed: {}", err));

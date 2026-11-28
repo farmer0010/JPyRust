@@ -53,7 +53,7 @@ jobs:
             test: false
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
@@ -85,7 +85,7 @@ jobs:
         cp rust-bridge/target/${{ matrix.target }}/release/${{ matrix.lib }} dist/${{ matrix.platform }}/${{ matrix.out }}
 
     - name: Upload native
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: native-${{ matrix.platform }}
         path: dist/
@@ -99,17 +99,17 @@ jobs:
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Use natives built by this run
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         pattern: native-*
         merge-multiple: true
         path: java-api/src/main/resources/natives
 
     - name: Set up Java
-      uses: actions/setup-java@v4
+      uses: actions/setup-java@v6
       with:
         distribution: 'temurin'
         java-version: '17'
@@ -128,17 +128,17 @@ jobs:
       JPYRUST_PROVISION_TEST: "true"
       JPYRUST_FULL_STACK_TEST: "true"
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Use natives built by this run
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         pattern: native-*
         merge-multiple: true
         path: java-api/src/main/resources/natives
 
     - name: Set up Java
-      uses: actions/setup-java@v4
+      uses: actions/setup-java@v6
       with:
         distribution: 'temurin'
         java-version: '17'
@@ -157,7 +157,7 @@ jobs:
 
     - name: Upload test report
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: windows-provision-report
         path: java-api/build/reports/tests/
@@ -166,7 +166,7 @@ jobs:
     name: Python tests
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -184,17 +184,17 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Use natives built by this run
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         pattern: native-*
         merge-multiple: true
         path: java-api/src/main/resources/natives
 
     - name: Set up Java
-      uses: actions/setup-java@v4
+      uses: actions/setup-java@v6
       with:
         distribution: 'temurin'
         java-version: '17'
@@ -230,7 +230,7 @@ jobs:
         mkdir -p dist && cp "$jar" "dist/jpyrust-${{ steps.version.outputs.value }}.jar"
 
     - name: Upload JAR
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: jar
         path: dist/
@@ -247,7 +247,7 @@ jobs:
 
     steps:
     - name: Download JAR and natives
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         path: artifacts
 
@@ -264,14 +264,14 @@ jobs:
         done
         ls -l release
 
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
       if: env.MAVEN_CENTRAL_USERNAME != ''
       with:
         path: source
 
     - name: Set up Java
       if: env.MAVEN_CENTRAL_USERNAME != ''
-      uses: actions/setup-java@v4
+      uses: actions/setup-java@v6
       with:
         distribution: 'temurin'
         java-version: '17'
@@ -293,7 +293,7 @@ jobs:
           -H "Authorization: Bearer $token" -F bundle=@build/central-bundle.zip
 
     - name: Create Release
-      uses: softprops/action-gh-release@v2
+      uses: softprops/action-gh-release@v3
       with:
         files: release/*
         generate_release_notes: true

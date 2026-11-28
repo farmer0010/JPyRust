@@ -14,7 +14,6 @@ Regenerate this file with `make notices` after changing `rust-bridge/Cargo.lock`
 | [getrandom](https://github.com/rust-random/getrandom) | 0.2.17 | MIT OR Apache-2.0 | The Rand Project Developers |
 | [jni](https://github.com/jni-rs/jni-rs) | 0.21.1 | MIT/Apache-2.0 | Josh Chase |
 | [jni-sys](https://github.com/sfackler/rust-jni-sys) | 0.3.0 | MIT/Apache-2.0 | Steven Fackler |
-| [lazy_static](https://github.com/rust-lang-nursery/lazy-static.rs) | 1.5.0 | MIT OR Apache-2.0 | Marvin Löbel |
 | [libc](https://github.com/rust-lang/libc) | 0.2.180 | MIT OR Apache-2.0 | The Rust Project Developers |
 | [log](https://github.com/rust-lang/log) | 0.4.29 | MIT OR Apache-2.0 | The Rust Project Developers |
 | [memchr](https://github.com/BurntSushi/memchr) | 2.7.6 | Unlicense OR MIT | Andrew Gallant, bluss |
@@ -28,13 +27,12 @@ Regenerate this file with `make notices` after changing `rust-bridge/Cargo.lock`
 | [thiserror](https://github.com/dtolnay/thiserror) | 1.0.69 | MIT OR Apache-2.0 | David Tolnay |
 | [win-sys](https://github.com/elast0ny/win-sys) | 0.3.1 | MIT OR Apache-2.0 | ElasT0ny |
 | [windows](https://github.com/microsoft/windows-rs) | 0.34.0 | MIT OR Apache-2.0 | Microsoft |
+| [windows-link](https://github.com/microsoft/windows-rs) | 0.2.1 | MIT OR Apache-2.0 | The windows-link authors |
 | [windows-sys](https://github.com/microsoft/windows-rs) | 0.45.0 | MIT OR Apache-2.0 | Microsoft |
-| [windows-sys](https://github.com/microsoft/windows-rs) | 0.52.0 | MIT OR Apache-2.0 | Microsoft |
+| [windows-sys](https://github.com/microsoft/windows-rs) | 0.61.2 | MIT OR Apache-2.0 | The windows-sys authors |
 | [windows-targets](https://github.com/microsoft/windows-rs) | 0.42.2 | MIT OR Apache-2.0 | Microsoft |
-| [windows-targets](https://github.com/microsoft/windows-rs) | 0.52.6 | MIT OR Apache-2.0 | Microsoft |
 | [windows_x86_64_msvc](https://github.com/microsoft/windows-rs) | 0.34.0 | MIT OR Apache-2.0 | Microsoft |
 | [windows_x86_64_msvc](https://github.com/microsoft/windows-rs) | 0.42.2 | MIT OR Apache-2.0 | Microsoft |
-| [windows_x86_64_msvc](https://github.com/microsoft/windows-rs) | 0.52.6 | MIT OR Apache-2.0 | Microsoft |
 | [zerocopy](https://github.com/google/zerocopy) | 0.8.33 | BSD-2-Clause OR Apache-2.0 OR MIT | Joshua Liebow-Feeser, Jack Wrenn |
 
 ## MIT License
