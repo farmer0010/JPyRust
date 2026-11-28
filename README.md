@@ -1,6 +1,6 @@
-# 🚀 JPyRust: High-Performance Universal AI Bridge
+# 🚀 JPyRust: Call CPython from Java, without a Python service
 
-> **"A persistent Python worker for Java, reached over JNI + shared memory instead of a subprocess per call."**
+> **One 1.6 MB JAR. Python runs in worker processes the JVM manages, provisions itself on first run, and can crash without taking the JVM down.**
 
 [![Build Status](https://img.shields.io/github/actions/workflow/status/farmer0010/JPyRust/build.yml?style=flat-square&logo=github&label=Build)](https://github.com/farmer0010/JPyRust/actions)
 [![Release](https://img.shields.io/github/v/release/farmer0010/JPyRust?style=flat-square&color=blue&label=Release)](https://jitpack.io/#farmer0010/JPyRust)
@@ -20,28 +20,37 @@
 </p>
 
 <div align="center">
-  <a href="docs/README_KR.md">🇰🇷 한국어 버전 (Korean Version)</a> · <a href="docs/GUIDE.md">📚 User Guide</a> · <a href="docs/ARCHITECTURE.md">🏗️ Architecture</a> · <a href="docs/CONTRIBUTING.md">🤝 Contributing</a>
+  <a href="docs/README_KR.md">🇰🇷 한국어 버전 (Korean Version)</a> · <a href="docs/GUIDE.md">📚 User Guide</a> · <a href="docs/ARCHITECTURE.md">🏗️ Architecture</a> · <a href="docs/API.md">📖 API</a> · <a href="docs/BENCHMARKS.md">⚡ Benchmarks</a> · <a href="docs/COMPATIBILITY.md">🧭 Compatibility</a> · <a href="docs/CONTRIBUTING.md">🤝 Contributing</a>
 </div>
 
 ---
 
 ## 💡 Introduction
 
-**JPyRust** is a hybrid architecture designed to bridge the gap between **Java's robustness** and **Python's AI ecosystem**. It enables Spring Boot applications to execute heavy AI models (YOLO, PyTorch, TensorFlow) with **near-native performance**.
+**JPyRust** lets a Java application call its own Python functions — a scikit-learn model, a PyTorch pipeline, pandas code — as if they were local methods. There is no Python service to deploy: the library downloads a pinned CPython, builds a venv with your `requirements.txt`, and runs your `@task` functions in worker processes that the JVM starts, watches and restarts.
 
-Unlike slow `ProcessBuilder` or high-latency HTTP APIs, JPyRust leverages **Rust JNI** and **Shared Memory (SHMEM)** to achieve sub-millisecond communication.
+| | JPyRust | In-process (Jep, Pemja, GraalPy) | Python HTTP service |
+| --- | --- | --- | --- |
+| Deploy | One JAR (1.6 MB) | JAR + Python and native build per host (GraalPy: ~160 MB of JARs) | A second service to run |
+| Python crash or hang | Worker restarted, JVM keeps running | A native crash takes the JVM down; a hang blocks the caller | Service restarts separately |
+| CPU-bound Python on N cores | `workers(n)` processes | One GIL per JVM | Several server processes |
+| Call latency, 16 B round trip | 10.8 µs p50 | lowest (no IPC) | 68 µs p50 (loopback) |
+| Full CPython ecosystem | Yes | Jep/Pemja yes, GraalPy partial | Yes |
+
+Latency from [the JMH benchmarks](docs/BENCHMARKS.md) on an Apple M5; in-process bridges were not measured.
 
 ### 🌟 Why JPyRust?
-* 🚀 **Zero-Latency**: Uses System RAM (Shared Memory) instead of HTTP/Sockets.
-* 🔄 **True Parallelism**: v1.3.0 supports **Multi-Instance** architecture (1 Java App connects to N Python Processes).
-* 🛠️ **Zero-Config**: Auto-provisions its Python environment on first run — python.org's embeddable Python 3.11.9 on Windows (~11MB), a checksum-verified portable CPython 3.11.18 from [python-build-standalone](https://github.com/astral-sh/python-build-standalone) (~26MB) on macOS/Linux. Nothing needs to be installed first, not even Python; downloads are cached in `~/.jpyrust/cache` and shared by every instance.
-* 🛡️ **Crash-Proof**: Rust monitors Python health and auto-restarts workers if they crash.
+* 📦 **One dependency, nothing to install**: python.org's embeddable Python 3.11.9 on Windows, a checksum-verified CPython 3.11.18 from [python-build-standalone](https://github.com/astral-sh/python-build-standalone) on macOS/Linux, cached in `~/.jpyrust/cache`. Docker images based on glibc work as-is.
+* 🛡️ **Crash isolation**: a segfault, `os._exit` or a hung task raises `WorkerCrashedException` / `WorkerTimeoutException` and the worker is respawned; the JVM never goes down with it.
+* 🚀 **Shared-memory IPC**: inputs and outputs travel through reusable shared-memory buffers, 3.7–6.3× faster than a loopback HTTP call at the payload sizes measured (16 B to 1 MB).
+* 🔄 **Multi-core Python**: `workers(4)` runs four Python processes behind one bridge — 3.2× the throughput of one worker on CPU-bound code, which a single-GIL design cannot do.
+* 🌱 **Spring Boot starter**: `jpyrust.*` properties, `JPyRustTemplate`, Micrometer timers and an Actuator health check.
 
 ---
 
-## 🏗️ Architecture (v1.3.0)
+## 🏗️ Architecture
 
-With the **v1.3.0 update**, JPyRust has moved from a generic Singleton pattern to a **Multi-Instance Object-Oriented Architecture**. This allows a single Java application to control multiple independent AI workers (e.g., Multi-Channel CCTV processing).
+Each `JPyRustBridge` owns one or more Python worker processes (`workers(n)`). Several bridges can run side by side with their own environments, for example one per model.
 
 ### 🧩 System Component Diagram
 
@@ -104,38 +113,65 @@ sequenceDiagram
 
 ## ⚡ Performance Benchmark
 
-A real, runnable benchmark ships with the repo: [`LatencyBenchmark.java`](java-api/src/test/java/com/jpyrust/LatencyBenchmark.java). It runs real YOLOv8n inference on an actual image (`sample.png`), 10 iterations after warmup, comparing:
-- **Legacy Subprocess** — spawns a brand-new Python interpreter (full torch/ultralytics import + model load) for every single call.
-- **JPyRust (JNI + SHMEM)** — reuses one persistent Python daemon with the model already loaded; only the image crosses via shared memory.
+Measured with JMH against a persistent Python HTTP server on the same machine ([details and how to run](docs/BENCHMARKS.md)):
 
-| Architecture | Communication | Latency (Avg, measured) |
-| :--- | :--- | :---: |
-| Legacy Subprocess (cold spawn per call) | Stdin/Stdout | ~2,330 ms |
-| JPyRust (JNI + SHMEM, persistent daemon) | Shared Memory | ~6 ms |
+| Payload | JPyRust p50 | Python HTTP server p50 |
+| --- | --- | --- |
+| 16 B | 10.8 µs | 68.0 µs |
+| 64 KB | 26.7 µs | 99.6 µs |
+| 1 MB | 150.3 µs | 615.4 µs |
 
-> *Measured on: Apple Silicon (arm64), macOS, PyTorch with MPS (Metal) acceleration, Python 3.12. ~390x faster, consistent across repeated runs.*
+CPU-bound Python from four Java threads: 292 calls/s with one worker, 930 with `workers(4)`, versus 247–283 for a threaded Python HTTP server.
 
-Nearly all of the "legacy" cost is one-time interpreter/library/model-load overhead (torch + ultralytics import, `YOLO(...)` construction) paid on *every single call* — the actual inference itself is only a few milliseconds. The daemon architecture pays that cost once at startup instead of per-request, which is the entire point of keeping a persistent worker around. Run `LatencyBenchmark` yourself to reproduce this against your own hardware — numbers will vary with CPU/GPU and image size, but the shape of the result (overhead dominates, not compute) should hold generally.
+> *Apple M5, OpenJDK 17, CPython 3.11.18, 2026-11-27. Run `./gradlew :benchmarks:jmh` on your own hardware.*
 
 ---
 
 ## 🚀 Quick Start
 
 ### 1. Installation (Gradle)
-Add the JitPack repository and dependency to your `build.gradle.kts`:
+
+From 2.0.0 the library is published to Maven Central:
 
 ```kotlin
-repositories {
-    maven { url = uri("[https://jitpack.io](https://jitpack.io)") }
-}
-
 dependencies {
-    // Latest stable version
-    implementation("com.github.farmer0010:JPyRust:v1.3.1")
+    implementation("io.github.farmer0010:jpyrust:2.0.0")
+    // Spring Boot: implementation("io.github.farmer0010:jpyrust-spring-boot-starter:2.0.0")
 }
 ```
 
-### 2. Usage (Java)
+JitPack keeps serving every tag (`com.github.farmer0010:JPyRust:<tag>` from `https://jitpack.io`); its JAR carries natives for Linux x86_64, macOS Apple Silicon and Windows x86_64 only.
+
+### 2. Usage (Java) — Your Own Python Code
+
+Register any Python function as a task and call it from Java. You choose the Python dependencies, and nothing beyond `numpy` is installed unless you ask for it.
+
+```python
+# tasks/text_tasks.py
+from jpyrust import task
+
+@task("WORD_COUNT")
+def word_count(data: bytes, args: str):
+    return {"words": len(data.decode("utf-8").split()), "args": args}
+```
+
+```java
+JPyRustBridge bridge = new JPyRustBridge("text")
+        .requirements(Path.of("python/requirements.txt"))
+        .moduleDir(Path.of("python/tasks"));
+bridge.initialize();
+
+String json = bridge.call("WORD_COUNT", "hello jpyrust");        // {"words": 2, "args": ""}
+byte[] raw = bridge.call("WORD_COUNT", bytes, "any args here");  // raw bytes in, raw bytes out
+```
+
+* A task receives the input bytes and the `args` string. Returning `bytes` sends them as-is, `str` is UTF-8 encoded, anything else is sent as JSON. An exception becomes a `TaskFailedException` in Java.
+* Every `.py` file in each `moduleDir` is imported at daemon start. Task names are case-insensitive, and a registered task replaces a built-in one with the same name. A module that fails to import is reported on stderr and skipped.
+* `requirements(...)` replaces the bundled core `requirements.txt`; requirements of enabled extras are appended to it. The install is keyed by the file's SHA-256, so changing it re-runs `pip install` on the next `initialize()`.
+* Calls from several threads run in parallel with `workers(n)`; `callAsync(...)` returns a `CompletableFuture`. See [the API reference](docs/API.md) for every option.
+
+
+### 3. Usage (Java) — Built-in Vision
 
 **Important:** As of v1.3.0, static methods are removed. You must instantiate `JPyRustBridge`.
 
@@ -175,7 +211,7 @@ public class VisionService {
 }
 ```
 
-### 3. Usage (Java) — Audio / Whisper
+### 4. Usage (Java) — Built-in Audio / Whisper
 
 **New:** JPyRust can also transcribe audio via [OpenAI Whisper](https://github.com/openai/whisper), reusing the same persistent-daemon architecture as YOLO.
 
@@ -201,35 +237,6 @@ public class SpeechService {
 ```
 
 > Audio input is expected as a WAV container (16kHz, mono, 16-bit PCM). `confidence` is an approximation derived from Whisper's per-segment `avg_logprob`, not a calibrated probability.
-
-### 4. Usage (Java) — Your Own Python Code
-
-Register any Python function as a task and call it from Java. You choose the Python dependencies, and nothing beyond `numpy` is installed unless you ask for it.
-
-```python
-# tasks/text_tasks.py
-from jpyrust import task
-
-@task("WORD_COUNT")
-def word_count(data: bytes, args: str):
-    return {"words": len(data.decode("utf-8").split()), "args": args}
-```
-
-```java
-JPyRustBridge bridge = new JPyRustBridge("text")
-        .requirements(Path.of("python/requirements.txt"))
-        .moduleDir(Path.of("python/tasks"));
-bridge.initialize();
-
-String json = bridge.call("WORD_COUNT", "hello jpyrust");        // {"words": 2, "args": ""}
-byte[] raw = bridge.call("WORD_COUNT", bytes, "any args here");  // raw bytes in, raw bytes out
-```
-
-* A task receives the input bytes and the `args` string. Returning `bytes` sends them as-is, `str` is UTF-8 encoded, anything else is sent as JSON. An exception becomes a `RuntimeException` in Java.
-* Every `.py` file in each `moduleDir` is imported at daemon start. Task names are case-insensitive, and a registered task replaces a built-in one with the same name. A module that fails to import is reported on stderr and skipped.
-* `requirements(...)` replaces the bundled core `requirements.txt`; requirements of enabled extras are appended to it. The install is keyed by the file's SHA-256, so changing it re-runs `pip install` on the next `initialize()`.
-* Custom tasks go through the file-based IPC path, so their output has no 1 MB limit.
-
 
 ---
 

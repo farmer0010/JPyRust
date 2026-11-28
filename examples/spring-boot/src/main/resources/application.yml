@@ -1,0 +1,15 @@
+jpyrust:
+  instance-id: sentiment-service
+  requirements: python/requirements.txt
+  module-dirs: python/tasks
+  workers: 2
+  task-timeout: 10s
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics
+  endpoint:
+    health:
+      show-details: always

@@ -118,7 +118,7 @@ jobs:
       shell: bash
       env:
         JPYRUST_PROVISION_TEST: "true"
-      run: ./gradlew :java-api:test :demo-web:compileJava --console=plain
+      run: ./gradlew :java-api:test :spring-boot-starter:test :demo-web:compileJava :examples:quickstart:compileJava :examples:spring-boot:compileJava :benchmarks:jmhClasses --console=plain
 
   windows-provision:
     name: Windows Python provisioning
@@ -242,6 +242,8 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
+    env:
+      MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
 
     steps:
     - name: Download JAR and natives
@@ -261,6 +263,34 @@ jobs:
           done
         done
         ls -l release
+
+    - uses: actions/checkout@v4
+      if: env.MAVEN_CENTRAL_USERNAME != ''
+      with:
+        path: source
+
+    - name: Set up Java
+      if: env.MAVEN_CENTRAL_USERNAME != ''
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    - name: Publish to Maven Central
+      if: env.MAVEN_CENTRAL_USERNAME != ''
+      shell: bash
+      working-directory: source
+      env:
+        MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+        SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+        SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+      run: |
+        for dir in ../artifacts/native-*; do cp -r "$dir"/* java-api/src/main/resources/natives/; done
+        ./gradlew :java-api:publishAllPublicationsToCentralStagingRepository :spring-boot-starter:publishAllPublicationsToCentralStagingRepository -Pversion=${GITHUB_REF_NAME#v} --console=plain
+        (cd build/central-staging && zip -qr ../central-bundle.zip io -x '*maven-metadata*')
+        token=$(printf '%s:%s' "$MAVEN_CENTRAL_USERNAME" "$MAVEN_CENTRAL_PASSWORD" | base64 -w0)
+        curl --fail-with-body -X POST "https://central.sonatype.com/api/v1/publisher/upload?publishingType=AUTOMATIC&name=jpyrust-${GITHUB_REF_NAME}" \
+          -H "Authorization: Bearer $token" -F bundle=@build/central-bundle.zip
 
     - name: Create Release
       uses: softprops/action-gh-release@v2

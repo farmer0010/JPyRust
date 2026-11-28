@@ -1,6 +1,6 @@
-# 🚀 JPyRust: 고성능 유니버설 AI 브리지
+# 🚀 JPyRust: Python 서비스 없이 Java에서 CPython 호출
 
-> **"매 호출마다 서브프로세스를 띄우는 대신, JNI + 공유 메모리로 상시 대기 중인 Python 워커에 접근합니다."**
+> **1.6MB JAR 하나로 끝납니다. Python은 JVM이 관리하는 워커 프로세스에서 돌고, 첫 실행 때 스스로 설치되며, 죽어도 JVM은 멈추지 않습니다.**
 
 [![Build Status](https://img.shields.io/github/actions/workflow/status/farmer0010/JPyRust/build.yml?style=flat-square&logo=github&label=Build)](https://github.com/farmer0010/JPyRust/actions)
 [![Release](https://img.shields.io/github/v/release/farmer0010/JPyRust?style=flat-square&color=blue&label=Release)](https://jitpack.io/#farmer0010/JPyRust)
@@ -20,28 +20,37 @@
 </p>
 
 <div align="center">
-  <a href="../README.md">🇺🇸 English Version</a> · <a href="GUIDE_KR.md">📚 사용자 가이드</a> · <a href="ARCHITECTURE.md">🏗️ 아키텍처</a> · <a href="CONTRIBUTING.md">🤝 기여 가이드</a>
+  <a href="../README.md">🇺🇸 English Version</a> · <a href="GUIDE_KR.md">📚 사용자 가이드</a> · <a href="ARCHITECTURE.md">🏗️ 아키텍처</a> · <a href="API.md">📖 API</a> · <a href="BENCHMARKS.md">⚡ 벤치마크</a> · <a href="COMPATIBILITY.md">🧭 호환성</a> · <a href="CONTRIBUTING.md">🤝 기여 가이드</a>
 </div>
 
 ---
 
 ## 💡 프로젝트 소개
 
-**JPyRust**는 **Java의 견고함**과 **Python의 AI 생태계** 간의 격차를 해소하기 위해 설계된 하이브리드 아키텍처입니다. **Spring Boot** 애플리케이션이 **네이티브에 가까운 성능**으로 무거운 AI 모델(YOLO, PyTorch, TensorFlow)을 실행할 수 있게 해줍니다.
+**JPyRust**는 Java 애플리케이션이 자기 Python 함수(scikit-learn 모델, PyTorch 파이프라인, pandas 코드)를 로컬 메서드처럼 부르게 해 줍니다. 따로 배포할 Python 서비스가 없습니다. 라이브러리가 고정 버전 CPython을 내려받고, `requirements.txt`로 venv를 만들고, `@task` 함수를 JVM이 띄우고 감시하고 다시 띄우는 워커 프로세스에서 실행합니다.
 
-느린 `ProcessBuilder`나 지연 시간이 긴 HTTP API와 달리, JPyRust는 **Rust JNI**와 **공유 메모리(SHMEM)**를 활용하여 밀리초(ms) 단위 미만의 초고속 통신을 달성합니다.
+| | JPyRust | 같은 프로세스 방식 (Jep, Pemja, GraalPy) | Python HTTP 서비스 |
+| --- | --- | --- | --- |
+| 배포 | JAR 하나 (1.6MB) | JAR + 서버마다 Python과 네이티브 빌드 (GraalPy는 JAR만 ~160MB) | 서비스를 하나 더 운영 |
+| Python이 죽거나 멈추면 | 워커만 재시작, JVM은 계속 동작 | 네이티브 크래시는 JVM까지 종료, 멈추면 호출 스레드가 막힘 | 서비스가 따로 재시작 |
+| CPU를 쓰는 Python을 N코어로 | `workers(n)` 프로세스 | JVM당 GIL 하나 | 서버 프로세스 여러 개 |
+| 호출 지연, 16B 왕복 | p50 10.8µs | 가장 낮음 (IPC 없음) | p50 68µs (루프백) |
+| CPython 생태계 전체 | 예 | Jep·Pemja 예, GraalPy 일부 | 예 |
+
+지연 시간은 Apple M5에서 돌린 [JMH 벤치마크](BENCHMARKS.md) 결과이며, 같은 프로세스 방식은 측정하지 않았습니다.
 
 ### 🌟 왜 JPyRust인가요?
-* 🚀 **Zero-Latency (지연 없음)**: 느린 HTTP/Socket 대신 시스템 RAM(공유 메모리)을 직접 사용하여 데이터 교환.
-* 🔄 **완벽한 병렬성 (True Parallelism)**: v1.3.0부터 **멀티 인스턴스** 아키텍처를 지원하여, 하나의 Java 앱이 여러 개의 독립적인 Python 프로세스를 동시에 제어할 수 있습니다.
-* 🛠️ **Zero-Config (설정 불필요)**: 첫 실행 시 Python 환경을 자동으로 구성합니다 — Windows는 python.org의 임베디드 Python 3.11.9(~11MB), macOS/Linux는 [python-build-standalone](https://github.com/astral-sh/python-build-standalone)의 체크섬 검증된 포터블 CPython 3.11.18(~26MB)을 씁니다. Python을 포함해 미리 설치할 것이 없고, 내려받은 파일은 `~/.jpyrust/cache`에 캐시돼 모든 인스턴스가 함께 씁니다.
-* 🛡️ **Crash-Proof (충돌 방지)**: Rust가 Python 프로세스의 상태를 실시간 감시하며, 충돌 발생 시 즉시 워커를 자동 재시작합니다.
+* 📦 **의존성 하나, 설치 불필요**: Windows는 python.org의 임베디드 Python 3.11.9, macOS/Linux는 [python-build-standalone](https://github.com/astral-sh/python-build-standalone)의 체크섬 검증된 CPython 3.11.18을 쓰며 `~/.jpyrust/cache`에 캐시합니다. glibc 기반 Docker 이미지에서도 그대로 동작합니다.
+* 🛡️ **장애 격리**: 세그폴트, `os._exit`, 멈춘 작업은 `WorkerCrashedException` / `WorkerTimeoutException`이 되고 워커가 다시 뜹니다. JVM이 같이 죽지 않습니다.
+* 🚀 **공유 메모리 IPC**: 입출력이 재사용하는 공유 메모리 버퍼로 오가며, 측정한 크기(16B~1MB)에서 루프백 HTTP 호출보다 3.7~6.3배 빠릅니다.
+* 🔄 **멀티코어 Python**: `workers(4)`는 브리지 하나 뒤에 Python 프로세스 4개를 띄웁니다. CPU를 쓰는 코드에서 워커 1개보다 처리량이 3.2배이고, GIL 하나에 묶인 구조로는 할 수 없는 일입니다.
+* 🌱 **Spring Boot starter**: `jpyrust.*` 설정, `JPyRustTemplate`, Micrometer 타이머, Actuator 헬스 체크.
 
 ---
 
-## 🏗️ 아키텍처 (v1.3.0)
+## 🏗️ 아키텍처
 
-**v1.3.0 업데이트**를 통해 JPyRust는 전역 싱글톤 패턴에서 벗어나 **멀티 인스턴스 객체 지향 아키텍처**로 완전히 전환되었습니다. 이를 통해 단일 Java 애플리케이션이 여러 개의 독립적인 AI 워커(예: 4채널 CCTV 동시 분석)를 효율적으로 제어할 수 있습니다.
+`JPyRustBridge` 하나는 Python 워커 프로세스를 하나 이상(`workers(n)`) 가집니다. 브리지 여러 개를 각자의 환경으로 나란히 띄울 수도 있습니다(예: 모델마다 하나).
 
 ### 🧩 시스템 컴포넌트 다이어그램
 
@@ -104,38 +113,64 @@ sequenceDiagram
 
 ## ⚡ 성능 벤치마크
 
-직접 돌려볼 수 있는 실측 벤치마크가 레포에 포함되어 있습니다: [`LatencyBenchmark.java`](../java-api/src/test/java/com/jpyrust/LatencyBenchmark.java). 실제 이미지(`sample.png`)에 대해 진짜 YOLOv8n 추론을 워밍업 후 10회 반복하며 다음 두 방식을 비교합니다.
-- **레거시 Subprocess** — 호출할 때마다 새 Python 인터프리터를 띄우고 torch/ultralytics를 처음부터 임포트 + 모델 로드.
-- **JPyRust (JNI + SHMEM)** — 모델이 이미 로드된 상시 대기 데몬 하나를 재사용하고, 이미지만 공유 메모리로 오갑니다.
+같은 머신의 상주 Python HTTP 서버와 JMH로 비교했습니다([자세한 내용과 실행 방법](BENCHMARKS.md)).
 
-| 아키텍처 | 통신 방식 | 지연 시간 (평균, 실측) |
-| :--- | :--- | :---: |
-| 레거시 Subprocess (매번 새 프로세스) | 표준 입출력 (Stdin/Out) | ~2,330ms |
-| JPyRust (JNI + SHMEM, 상시 데몬) | 공유 메모리 (SHMEM) | ~6ms |
+| 데이터 | JPyRust p50 | Python HTTP 서버 p50 |
+| --- | --- | --- |
+| 16B | 10.8µs | 68.0µs |
+| 64KB | 26.7µs | 99.6µs |
+| 1MB | 150.3µs | 615.4µs |
 
-> *테스트 환경: Apple Silicon(arm64), macOS, PyTorch MPS(Metal) 가속, Python 3.12. 약 390배 차이이며 반복 실행에서도 일관되게 재현됨.*
+Java 스레드 4개에서 CPU를 쓰는 Python 호출: 워커 1개 초당 292건, `workers(4)` 930건, 스레드 방식 Python HTTP 서버 247~283건.
 
-"레거시" 쪽 시간의 거의 대부분은 매 호출마다 반복되는 1회성 오버헤드(torch/ultralytics 임포트, `YOLO(...)` 모델 생성)이고, 실제 추론 자체는 몇 ms에 불과합니다. 데몬 아키텍처는 그 비용을 요청마다가 아니라 시작 시 딱 한 번만 지불하는데, 이게 바로 상시 워커를 두는 이유 그 자체입니다. 직접 여러분 하드웨어에서 `LatencyBenchmark`를 돌려보시면 됩니다 — CPU/GPU, 이미지 크기에 따라 절대 수치는 달라지겠지만 "연산이 아니라 오버헤드가 지배한다"는 구조 자체는 일반적으로 유지될 겁니다.
+> *Apple M5, OpenJDK 17, CPython 3.11.18, 2026-11-27. `./gradlew :benchmarks:jmh`로 직접 재현할 수 있습니다.*
 
 ---
 
 ## 🚀 빠른 시작 (Quick Start)
 
 ### 1. 설치 (Gradle)
-`build.gradle.kts` 파일에 JitPack 리포지토리와 의존성을 추가하세요:
+
+2.0.0부터 Maven Central에 배포합니다.
 
 ```kotlin
-repositories {
-    maven { url = uri("[https://jitpack.io](https://jitpack.io)") }
-}
-
 dependencies {
-    // 최신 안정 버전
-    implementation("com.github.farmer0010:JPyRust:v1.3.1")
+    implementation("io.github.farmer0010:jpyrust:2.0.0")
+    // Spring Boot: implementation("io.github.farmer0010:jpyrust-spring-boot-starter:2.0.0")
 }
 ```
 
-### 2. 사용법 (Java)
+JitPack도 모든 태그를 계속 제공합니다(`https://jitpack.io`의 `com.github.farmer0010:JPyRust:<tag>`). 다만 JitPack JAR에는 Linux x86_64, macOS Apple Silicon, Windows x86_64용 네이티브만 들어 있습니다.
+
+### 2. 사용법 (Java) — 내 Python 코드 호출
+
+아무 Python 함수나 작업으로 등록해 Java에서 부를 수 있습니다. Python 의존성은 직접 정하고, 요청하지 않으면 `numpy` 외에는 아무것도 설치하지 않습니다.
+
+```python
+# tasks/text_tasks.py
+from jpyrust import task
+
+@task("WORD_COUNT")
+def word_count(data: bytes, args: str):
+    return {"words": len(data.decode("utf-8").split()), "args": args}
+```
+
+```java
+JPyRustBridge bridge = new JPyRustBridge("text")
+        .requirements(Path.of("python/requirements.txt"))
+        .moduleDir(Path.of("python/tasks"));
+bridge.initialize();
+
+String json = bridge.call("WORD_COUNT", "hello jpyrust");        // {"words": 2, "args": ""}
+byte[] raw = bridge.call("WORD_COUNT", bytes, "any args here");  // 바이트 입력, 바이트 출력
+```
+
+* 작업 함수는 입력 바이트와 `args` 문자열을 받습니다. `bytes`를 반환하면 그대로, `str`은 UTF-8로, 그 밖의 값은 JSON으로 보냅니다. 함수에서 난 예외는 Java에서 `TaskFailedException`이 됩니다.
+* 각 `moduleDir`의 모든 `.py` 파일을 데몬 시작 시 import합니다. 작업 이름은 대소문자를 구분하지 않고, 등록한 작업은 같은 이름의 내장 작업을 대체합니다. import에 실패한 모듈은 stderr에 알리고 건너뜁니다.
+* `requirements(...)`는 내장 코어 `requirements.txt`를 대체하고, 켠 extra의 의존성은 그 뒤에 덧붙습니다. 설치 여부는 파일의 SHA-256으로 판단하므로, 파일을 바꾸면 다음 `initialize()`에서 `pip install`을 다시 실행합니다.
+* `workers(n)`이면 여러 스레드의 호출이 병렬로 돌고, `callAsync(...)`는 `CompletableFuture`를 돌려줍니다. 모든 옵션은 [API 문서](API.md)에 있습니다.
+
+### 3. 사용법 (Java) — 내장 비전 작업
 
 **중요:** v1.3.0부터 `static` 메서드가 제거되었습니다. 반드시 `JPyRustBridge` 객체를 생성해야 합니다.
 
@@ -175,7 +210,7 @@ public class VisionService {
 }
 ```
 
-### 3. 사용법 (Java) — 오디오 / Whisper
+### 4. 사용법 (Java) — 내장 오디오 / Whisper
 
 **신규:** JPyRust는 [OpenAI Whisper](https://github.com/openai/whisper)를 통한 오디오 전사도 지원합니다 — YOLO와 동일한 상시 대기 데몬 아키텍처를 그대로 재사용합니다.
 
@@ -201,34 +236,6 @@ public class SpeechService {
 ```
 
 > 오디오 입력은 WAV 컨테이너(16kHz, mono, 16-bit PCM)를 가정합니다. `confidence`는 보정된 확률이 아니라 Whisper 세그먼트별 `avg_logprob`에서 유도한 근사치입니다.
-
-### 4. 사용법 (Java) — 내 Python 코드 호출
-
-아무 Python 함수나 작업으로 등록해 Java에서 부를 수 있습니다. Python 의존성은 직접 정하고, 요청하지 않으면 `numpy` 외에는 아무것도 설치하지 않습니다.
-
-```python
-# tasks/text_tasks.py
-from jpyrust import task
-
-@task("WORD_COUNT")
-def word_count(data: bytes, args: str):
-    return {"words": len(data.decode("utf-8").split()), "args": args}
-```
-
-```java
-JPyRustBridge bridge = new JPyRustBridge("text")
-        .requirements(Path.of("python/requirements.txt"))
-        .moduleDir(Path.of("python/tasks"));
-bridge.initialize();
-
-String json = bridge.call("WORD_COUNT", "hello jpyrust");        // {"words": 2, "args": ""}
-byte[] raw = bridge.call("WORD_COUNT", bytes, "any args here");  // 바이트 입력, 바이트 출력
-```
-
-* 작업 함수는 입력 바이트와 `args` 문자열을 받습니다. `bytes`를 반환하면 그대로, `str`은 UTF-8로, 그 밖의 값은 JSON으로 보냅니다. 함수에서 난 예외는 Java에서 `RuntimeException`이 됩니다.
-* 각 `moduleDir`의 모든 `.py` 파일을 데몬 시작 시 import합니다. 작업 이름은 대소문자를 구분하지 않고, 등록한 작업은 같은 이름의 내장 작업을 대체합니다. import에 실패한 모듈은 stderr에 알리고 건너뜁니다.
-* `requirements(...)`는 내장 코어 `requirements.txt`를 대체하고, 켠 extra의 의존성은 그 뒤에 덧붙습니다. 설치 여부는 파일의 SHA-256으로 판단하므로, 파일을 바꾸면 다음 `initialize()`에서 `pip install`을 다시 실행합니다.
-* 사용자 작업은 파일 기반 IPC 경로를 타므로 출력에 1MB 제한이 없습니다.
 
 ---
 

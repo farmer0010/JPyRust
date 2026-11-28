@@ -38,7 +38,7 @@ repositories {
 }
 
 dependencies {
-    implementation("com.github.farmer0010:JPyRust:v1.3.1")
+    implementation("com.github.farmer0010:JPyRust:v2.0.0")
 }
 ```
 
