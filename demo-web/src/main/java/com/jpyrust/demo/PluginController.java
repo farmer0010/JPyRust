@@ -2,6 +2,7 @@ package com.jpyrust.demo;
 
 import com.jpyrust.JPyRustBridge;
 import org.springframework.web.bind.annotation.*;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
 @RestController
@@ -17,7 +18,7 @@ public class PluginController {
     @PostMapping("/{taskType}")
     public Map<String, Object> executePlugin(@PathVariable String taskType, @RequestBody Map<String, Object> payload) {
         try {
-            String metadata = "NONE";
+            String metadata = "";
             if (payload.containsKey("args")) {
                 Object args = payload.get("args");
                 if (args instanceof Iterable) {
@@ -29,7 +30,7 @@ public class PluginController {
                 }
             }
 
-            String result = bridge.sendTask(taskType.toUpperCase(), metadata);
+            String result = new String(bridge.call(taskType, new byte[0], metadata), StandardCharsets.UTF_8);
             return Map.of("task", taskType, "result", result);
 
         } catch (Exception e) {

@@ -119,7 +119,7 @@
             <div>
                 <div class="p-title">Processed (Zero-Copy Result)</div>
                 <div class="image-box">
-                    <img id="imgResult" src="" alt="Result will appear here" style="display:none">
+                    <canvas id="imgResult" style="display:none; max-width:100%"></canvas>
                 </div>
             </div>
         </div>
@@ -143,6 +143,21 @@
             }
         });
 
+        function drawDetections(ctx, detections) {
+            ctx.lineWidth = Math.max(2, ctx.canvas.width / 300);
+            ctx.font = `${Math.max(14, ctx.canvas.width / 50)}px sans-serif`;
+            for (const { bbox: [x, y, w, h], label, score } of detections) {
+                ctx.strokeStyle = '#00e676';
+                ctx.strokeRect(x, y, w, h);
+                const text = `${label} ${(score * 100).toFixed(0)}%`;
+                const textHeight = parseInt(ctx.font);
+                ctx.fillStyle = '#00e676';
+                ctx.fillRect(x, Math.max(0, y - textHeight - 4), ctx.measureText(text).width + 8, textHeight + 4);
+                ctx.fillStyle = '#000';
+                ctx.fillText(text, x + 4, Math.max(textHeight, y - 4));
+            }
+        }
+
         async function processImage() {
             if (!fileInput.files[0]) {
                 alert("Please select an image first.");
@@ -164,13 +179,16 @@
 
                 if (!response.ok) throw new Error("Processing failed");
 
-                const blob = await response.blob();
-                const url = URL.createObjectURL(blob);
+                const { detections } = await response.json();
                 const endTime = performance.now();
 
-                imgResult.src = url;
+                imgResult.width = imgOriginal.naturalWidth;
+                imgResult.height = imgOriginal.naturalHeight;
+                const ctx = imgResult.getContext('2d');
+                ctx.drawImage(imgOriginal, 0, 0);
+                drawDetections(ctx, detections);
                 imgResult.style.display = 'block';
-                status.innerText = `✅ Success! Total Roundtrip: ${(endTime - startTime).toFixed(2)}ms`;
+                status.innerText = `✅ ${detections.length} objects · Total Roundtrip: ${(endTime - startTime).toFixed(2)}ms`;
 
             } catch (err) {
                 console.error(err);

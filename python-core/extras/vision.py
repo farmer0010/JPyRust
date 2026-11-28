@@ -21,18 +21,19 @@ def decode_image(data):
         raise ValueError("Failed to decode image")
     h, w = image.shape[:2]
     if w <= TARGET_WIDTH:
-        return image
-    return cv2.resize(image, (TARGET_WIDTH, int(h * TARGET_WIDTH / w)), interpolation=cv2.INTER_LINEAR)
+        return image, 1.0
+    resized = cv2.resize(image, (TARGET_WIDTH, int(h * TARGET_WIDTH / w)), interpolation=cv2.INTER_LINEAR)
+    return resized, w / TARGET_WIDTH
 
 
 @task("YOLO")
 def yolo(data, args):
-    image = decode_image(data)
+    image, scale = decode_image(data)
     detections = []
     if model:
         results = model(image, conf=config["conf"], verbose=False)
         for box in results[0].boxes or []:
-            x1, y1, x2, y2 = box.xyxy[0].tolist()
+            x1, y1, x2, y2 = (v * scale for v in box.xyxy[0].tolist())
             detections.append({
                 "bbox": [x1, y1, x2 - x1, y2 - y1],
                 "label": results[0].names[int(box.cls[0])],

@@ -262,26 +262,27 @@ byte[] raw = bridge.call("WORD_COUNT", bytes, "any args here");  // 바이트 �
 <details>
 <summary><strong>⏱️ 4. 오류 처리와 타임아웃</strong></summary>
 
-네이티브 계층의 실패는 JVM을 종료시키거나 `null`을 반환하지 않고 Java 예외로 전달됩니다.
+모든 실패는 `JPyRustException`(`RuntimeException`의 하위 클래스)으로 옵니다. JVM이 죽거나 `null`이 돌아오는 경우는 없습니다.
 
 | 상황 | 결과 |
 | --- | --- |
-| `initialize()` 전이나 `close()` 후에 `processImage` / `processAudio` / `sendTask` / `call` 호출 | `IllegalStateException` |
-| Python 작업 실패 (디코딩 실패, 알 수 없는 작업, 모델 없음 등) | 워커의 `ERROR ...` 메시지를 담은 `RuntimeException` |
-| 결과가 1MB 공유 메모리 출력 버퍼보다 큼 (YOLO, EDGE_DETECT) | `RuntimeException` (`Output too large: ...`) |
-| heap `ByteBuffer`를 넘기거나 `length`가 버퍼보다 큼 | `RuntimeException` (`Input must be a direct ByteBuffer` / `Invalid input length ...`) |
-| `initialize()` 중 Python 데몬 기동 실패 | `RuntimeException` (`Failed to initialize JPyRustBridge`, 원인 `Daemon start failed: ...`) |
+| `initialize()` 전이나 `close()` 후 호출 | `IllegalStateException` |
+| Python 작업에서 예외 (잘못된 입력, 없는 작업, 켜지 않은 extra 등) | 워커의 `ERROR ...` 메시지를 담은 `TaskFailedException`. 워커는 계속 동작 |
+| 작업이 작업 타임아웃보다 오래 걸림 | `WorkerTimeoutException`. 워커 프로세스를 종료하고 다음 호출 때 다시 띄움 |
+| 워커 프로세스가 죽음 (세그폴트, `os._exit`, OOM 종료) | `WorkerCrashedException`. 다음 호출 때 다시 띄움 |
+| heap `ByteBuffer`를 넘기거나 `length`가 버퍼보다 큼 | `JPyRustException` (`Input must be a direct ByteBuffer` / `Invalid input length ...`) |
+| `initialize()` 중 Python 데몬 기동 실패 | `JPyRustException` (`Failed to initialize JPyRustBridge`, 원인 `Daemon start failed: ...`) |
 
-`processEdgeDetection`은 실패 시 여전히 `null`을 반환하고, `processNlp` / `processRegression`은 여전히 `{"error": ...}` JSON 문자열을 반환합니다. 이 래퍼들은 예외를 내부에서 처리합니다.
+```java
+JPyRustBridge bridge = new JPyRustBridge("svc")
+        .timeouts(Duration.ofSeconds(120), Duration.ofSeconds(10))  // 기동(모델 로드 포함), 작업 1건
+        .workers(4);                                                 // Python 프로세스 4개, 호출을 병렬 처리
+```
 
-| 타임아웃 | 값 | 초과 시 |
-| --- | --- | --- |
-| 데몬 기동 (`READY` 대기, 모델 로딩 포함) | 600초 | 프로세스를 종료하고 예외 발생 |
-| 작업 1건 (`DONE` / `ERROR` 대기) | 300초 | 프로세스를 종료하고 예외 발생. 다음 호출 때 새 데몬을 띄움 (기동 타임아웃 다시 적용) |
-
-* 타임아웃은 `rust-bridge/src/lib.rs`의 상수(`READY_TIMEOUT`, `TASK_TIMEOUT`)이며 아직 설정으로 바꿀 수 없습니다.
-* 인스턴스마다 데몬이 하나이고 요청을 한 번에 하나씩 처리합니다. 작업 하나가 멈추면 같은 인스턴스의 다른 요청도 최대 300초 기다립니다. 독립적인 작업은 별도 인스턴스(`new JPyRustBridge("id")`)로 나누세요.
-* 데몬이 죽으면 다음 호출 때 자동으로 다시 띄웁니다. 그 호출은 기동 비용(모델 재로딩)을 치릅니다.
+* 기본값은 기동 600초, 작업 300초입니다.
+* `workers(n)`은 하나의 환경을 공유하는 Python 프로세스 `n`개를 띄웁니다. 여러 스레드의 호출이 서로 다른 프로세스에서 병렬로 돌아서, CPU를 쓰는 Python 코드가 GIL 하나에 묶이지 않고 코어 `n`개를 씁니다. `callAsync(task, bytes, args)`는 같은 크기의 스레드 풀에서 도는 `CompletableFuture`를 돌려줍니다.
+* 데이터는 재사용하는 공유 메모리 버퍼로 오가며, 필요하면 최대 256MB까지 늘어납니다. 그보다 크거나 공유 메모리를 쓸 수 없는 환경이면 자동으로 파일로 넘어갑니다. 출력 크기 제한은 없습니다.
+* 다시 뜬 워커는 기동 비용(모델 재로드)을 다시 치릅니다.
 </details>
 
 ---

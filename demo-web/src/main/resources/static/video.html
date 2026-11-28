@@ -63,7 +63,7 @@
         }
         
         .video-box video,
-        .video-box img {
+        .video-box canvas {
             border-radius: 8px;
             background: #000;
             display: block;
@@ -236,7 +236,7 @@
             </div>
             <div class="video-box">
                 <h3>🔍 YOLO Detection Output</h3>
-                <img id="output" alt="Processed frame will appear here">
+                <canvas id="output"></canvas>
             </div>
         </div>
         
@@ -322,7 +322,7 @@
                 throw new Error(`Server error: ${response.status}`);
             }
 
-            return await response.blob();
+            return (await response.json()).detections;
         }
 
         // Main streaming loop
@@ -336,12 +336,21 @@
                 const frameBlob = await captureFrame();
                 
                 // Send to server and get result
-                const resultBlob = await processFrame(frameBlob);
+                const detections = await processFrame(frameBlob);
                 
                 // Display result
-                const imageUrl = URL.createObjectURL(resultBlob);
-                output.onload = () => URL.revokeObjectURL(imageUrl);
-                output.src = imageUrl;
+                output.width = VIDEO_WIDTH;
+                output.height = VIDEO_HEIGHT;
+                const outCtx = output.getContext('2d');
+                outCtx.drawImage(canvas, 0, 0);
+                outCtx.lineWidth = 3;
+                outCtx.font = '16px sans-serif';
+                for (const { bbox: [x, y, w, h], label, score } of detections) {
+                    outCtx.strokeStyle = '#00e676';
+                    outCtx.strokeRect(x, y, w, h);
+                    outCtx.fillStyle = '#00e676';
+                    outCtx.fillText(`${label} ${(score * 100).toFixed(0)}%`, x + 4, Math.max(16, y - 4));
+                }
 
                 // Update stats
                 frameCount++;

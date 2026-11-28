@@ -263,26 +263,27 @@ byte[] raw = bridge.call("WORD_COUNT", bytes, "any args here");  // raw bytes in
 <details>
 <summary><strong>⏱️ 4. Errors & Timeouts</strong></summary>
 
-Native failures surface as Java exceptions instead of crashing the JVM or returning `null`.
+Every failure is a `JPyRustException` (a `RuntimeException`), so the JVM never crashes and nothing returns `null`.
 
 | Situation | What you get |
 | --- | --- |
-| `processImage` / `processAudio` / `sendTask` / `call` before `initialize()` or after `close()` | `IllegalStateException` |
-| Python task fails (decode error, unknown task, missing model, ...) | `RuntimeException` with the worker's `ERROR ...` message |
-| Result larger than the 1 MB shared-memory output buffer (YOLO, EDGE_DETECT) | `RuntimeException` (`Output too large: ...`) |
-| Heap `ByteBuffer` passed, or `length` larger than the buffer | `RuntimeException` (`Input must be a direct ByteBuffer` / `Invalid input length ...`) |
-| Python daemon does not start during `initialize()` | `RuntimeException` (`Failed to initialize JPyRustBridge`, cause `Daemon start failed: ...`) |
+| Any call before `initialize()` or after `close()` | `IllegalStateException` |
+| The Python task raises (bad input, unknown task, missing extra, ...) | `TaskFailedException` with the worker's `ERROR ...` message; the worker keeps running |
+| The task runs longer than the task timeout | `WorkerTimeoutException`; the worker process is killed and respawned on the next call |
+| The worker process dies (segfault, `os._exit`, OOM kill) | `WorkerCrashedException`; respawned on the next call |
+| Heap `ByteBuffer` passed, or `length` larger than the buffer | `JPyRustException` (`Input must be a direct ByteBuffer` / `Invalid input length ...`) |
+| The Python daemon does not start during `initialize()` | `JPyRustException` (`Failed to initialize JPyRustBridge`, cause `Daemon start failed: ...`) |
 
-`processEdgeDetection` still returns `null` on failure, and `processNlp` / `processRegression` still return an `{"error": ...}` JSON string — these wrappers catch the exception themselves.
+```java
+JPyRustBridge bridge = new JPyRustBridge("svc")
+        .timeouts(Duration.ofSeconds(120), Duration.ofSeconds(10))  // startup (incl. model load), per task
+        .workers(4);                                                 // 4 Python processes, calls run in parallel
+```
 
-| Timeout | Value | On expiry |
-| --- | --- | --- |
-| Daemon startup (waiting for `READY`, includes model loading) | 600 s | Process is killed, call throws |
-| Single task (waiting for `DONE` / `ERROR`) | 300 s | Process is killed, call throws; the next call spawns a fresh daemon (startup timeout applies again) |
-
-* Timeouts are fixed constants (`READY_TIMEOUT`, `TASK_TIMEOUT` in `rust-bridge/src/lib.rs`) and are not configurable yet.
-* Each instance has one daemon and processes requests one at a time, so a task that hangs blocks other requests on the same instance for up to 300 s. Use separate instances (`new JPyRustBridge("id")`) for independent workloads.
-* A crashed daemon is respawned automatically on the next call; that call pays the startup cost (model reload).
+* Defaults are 600 s for startup and 300 s per task.
+* `workers(n)` starts `n` Python processes sharing one environment. Calls from different threads run in parallel on separate processes, so CPU-bound Python code uses `n` cores instead of being serialized by one GIL. `callAsync(task, bytes, args)` returns a `CompletableFuture` backed by a pool of the same size.
+* Data goes through reusable shared-memory buffers that grow as needed (up to 256 MB); larger payloads, or platforms where shared memory is unavailable, fall back to files automatically. There is no fixed output size limit.
+* A respawned worker pays the startup cost again (model reload).
 </details>
 
 ---

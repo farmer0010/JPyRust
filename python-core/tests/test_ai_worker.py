@@ -39,13 +39,41 @@ def test_file_protocol_round_trip(worker, tmp_path):
     assert out_info is None
 
     written = worker.write_output_data("req1", b"result", None)
-    assert written == 6
+    assert written == "6"
     assert read_output_file(tmp_path, "req1") == b"result"
 
 
-def test_output_larger_than_shared_memory_raises(worker):
-    with pytest.raises(ValueError, match="Output too large"):
-        worker.write_output_data("req2", b"x" * 11, ("unused_shm", 10))
+def test_output_larger_than_shared_memory_falls_back_to_file(worker, tmp_path):
+    assert worker.write_output_data("req2", b"x" * 11, ("unused_shm", 10)) == "11 FILE"
+    assert read_output_file(tmp_path, "req2") == b"x" * 11
+
+
+def test_shared_memory_round_trip_through_daemon(tmp_path, module_dir):
+    from multiprocessing import shared_memory
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    shm_in = shared_memory.SharedMemory(create=True, size=4096)
+    shm_out = shared_memory.SharedMemory(create=True, size=8)
+    proc = start_daemon(work_dir, module_dir)
+    try:
+        assert proc.stdout.readline().strip() == "READY"
+        shm_in.buf[:2] = b"hi"
+        proc.stdin.write(f"EXECUTE SHOUT r1 SHMEM {shm_in.name} 2 {shm_out.name} 8\n")
+        proc.stdin.flush()
+        assert proc.stdout.readline().strip() == "DONE 2"
+        assert bytes(shm_out.buf[:2]) == b"HI"
+
+        shm_in.buf[:10] = b"abcdefghij"
+        proc.stdin.write(f"EXECUTE SHOUT r2 SHMEM {shm_in.name} 10 {shm_out.name} 8\n")
+        proc.stdin.flush()
+        assert proc.stdout.readline().strip() == "DONE 10 FILE"
+        assert read_output_file(work_dir, "r2") == b"ABCDEFGHIJ"
+        stop(proc)
+        assert "leaked shared_memory" not in proc.stderr.read()
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        shm_in.close(); shm_in.unlink(); shm_out.close(); shm_out.unlink()
 
 
 def test_daemon_status_round_trip(tmp_path):
@@ -178,12 +206,23 @@ def test_daemon_starts_without_numpy_or_cv2(tmp_path, module_dir):
 
 FAKE_ULTRALYTICS = '''import sys, types
 fake = types.ModuleType("ultralytics")
-class YOLO:
+class Vec(list):
+    def tolist(self):
+        return list(self)
+class Box:
+    xyxy = [Vec([10.0, 20.0, 110.0, 220.0])]
+    cls = [0]
+    conf = [0.9]
+class Result:
     names = {0: "bus"}
+    boxes = [Box()]
+class YOLO:
     def __init__(self, path):
         pass
     def to(self, device):
         pass
+    def __call__(self, image, conf, verbose):
+        return [Result()]
 fake.YOLO = YOLO
 sys.modules["ultralytics"] = fake
 '''
@@ -209,6 +248,13 @@ def test_vision_extra_registers_edge_detect(tmp_path):
         assert execute(proc, tmp_path, "EDGE_DETECT", "r1", pixels, "4 4 3").startswith("DONE ")
         assert read_output_file(tmp_path, "r1")[:2] == b"\xff\xd8"
         assert execute(proc, tmp_path, "YOLO", "r2", b"not an image") == "ERROR ValueError: Failed to decode image"
+
+        import cv2
+        import numpy as np
+        _, png = cv2.imencode(".png", np.zeros((640, 1280, 3), dtype=np.uint8))
+        assert execute(proc, tmp_path, "YOLO", "r3", png.tobytes()).startswith("DONE ")
+        detections = json.loads(read_output_file(tmp_path, "r3"))["detections"]
+        assert detections == [{"bbox": [20.0, 40.0, 200.0, 400.0], "label": "bus", "score": 0.9}]
         stop(proc)
     finally:
         if proc.poll() is None:

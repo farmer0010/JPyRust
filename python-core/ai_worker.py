@@ -53,7 +53,6 @@ EXTRA_TASKS = {
 }
 
 def initialize_models():
-    load_plugins()
     load_user_modules()
 
 def load_user_modules():
@@ -108,45 +107,30 @@ def make_task_handler(fn):
             return "ERROR " + " ".join(f"{type(e).__name__}: {e}".split())
     return handle
 
-def load_plugins():
-    plugin_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plugins")
-    if not os.path.exists(plugin_dir):
-        return
-    plugin_files = glob.glob(os.path.join(plugin_dir, "*.py"))
-    for plugin_file in plugin_files:
-        if "__init__" in plugin_file: continue
-        try:
-            module_name = os.path.splitext(os.path.basename(plugin_file))[0]
-            spec = importlib.util.spec_from_file_location(module_name, plugin_file)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            if hasattr(module, "TASK_TYPE") and hasattr(module, "handle"):
-                TASK_HANDLERS[module.TASK_TYPE] = module.handle
-        except:
-            pass
+_shared_memory = {}
 
-def parse_input_protocol(request_id, metadata, task_type=None):
-    TEXT_BASED_TASKS = {"NLP_TEXTBLOB", "SENTIMENT", "REGRESSION", "STATUS"}
-    force_file_output = task_type and task_type.upper() in TEXT_BASED_TASKS
-    
-    if len(metadata) > 0 and metadata[0] == "SHMEM":
-        in_shm_name = metadata[1]
-        in_size = int(metadata[2])
-        out_info = None
-        if len(metadata) >= 5 and "_out_" in metadata[3]:
-            if not force_file_output:
-                out_info = (metadata[3], int(metadata[4]))
-            real_metadata = metadata[5:]
-        else:
-            real_metadata = metadata[3:]
+def attach_shared_memory(name):
+    if name not in _shared_memory:
+        shm = multiprocessing.shared_memory.SharedMemory(name=name)
+        if sys.platform != "win32":
+            from multiprocessing import resource_tracker
+            resource_tracker.unregister(shm._name, "shared_memory")
+        _shared_memory[name] = shm
+    return _shared_memory[name]
 
+def release_shared_memory(keep):
+    for name in [n for n in _shared_memory if n not in keep]:
+        _shared_memory.pop(name).close()
+
+def parse_input_protocol(request_id, metadata):
+    if len(metadata) >= 5 and metadata[0] == "SHMEM":
+        in_name, in_size, out_name, out_capacity = metadata[1], int(metadata[2]), metadata[3], int(metadata[4])
+        release_shared_memory({in_name, out_name})
         for attempt in range(15):
             try:
-                shm = multiprocessing.shared_memory.SharedMemory(name=in_shm_name)
-                data = bytes(shm.buf[:in_size])
-                shm.close()
-                return data, real_metadata, out_info
-            except:
+                data = bytes(attach_shared_memory(in_name).buf[:in_size])
+                return data, metadata[5:], (out_name, out_capacity)
+            except Exception:
                 time.sleep(0.05 + attempt * 0.01)
         raise RuntimeError("Input SHMEM read failed")
 
@@ -158,25 +142,17 @@ def parse_input_protocol(request_id, metadata, task_type=None):
     return data, metadata, None
 
 def write_output_data(request_id, data_bytes, out_shm_info):
-    if out_shm_info:
-        shm_name, capacity = out_shm_info
-        if len(data_bytes) > capacity:
-            raise ValueError(f"Output too large: {len(data_bytes)} bytes exceeds shared memory capacity {capacity} bytes")
-        for attempt in range(15):
-            try:
-                shm = multiprocessing.shared_memory.SharedMemory(name=shm_name)
-                shm.buf[:len(data_bytes)] = data_bytes
-                shm.close()
-                return len(data_bytes)
-            except:
-                time.sleep(0.05 + attempt * 0.01)
-        raise RuntimeError("Output SHMEM write failed")
-    else:
-        output_path = os.path.join(WORK_DIR, f"output_{request_id}.dat")
-        with open(output_path, "wb") as f:
-            f.write(struct.pack(">I", len(data_bytes)))
-            f.write(data_bytes)
-        return len(data_bytes)
+    if out_shm_info and len(data_bytes) <= out_shm_info[1]:
+        try:
+            attach_shared_memory(out_shm_info[0]).buf[:len(data_bytes)] = data_bytes
+            return str(len(data_bytes))
+        except Exception:
+            pass
+    output_path = os.path.join(WORK_DIR, f"output_{request_id}.dat")
+    with open(output_path, "wb") as f:
+        f.write(struct.pack(">I", len(data_bytes)))
+        f.write(data_bytes)
+    return f"{len(data_bytes)} FILE" if out_shm_info else str(len(data_bytes))
 
 def handle_status(request_id, raw_metadata):
     try:
@@ -187,7 +163,7 @@ def handle_status(request_id, raw_metadata):
             "device": DEVICE,
             "instance": args.instance_id
         }
-        _, _, out_info = parse_input_protocol(request_id, raw_metadata, "STATUS")
+        _, _, out_info = parse_input_protocol(request_id, raw_metadata)
         written = write_output_data(request_id, json.dumps(status).encode('utf-8'), out_info)
         return f"DONE {written}"
     except Exception as e:
