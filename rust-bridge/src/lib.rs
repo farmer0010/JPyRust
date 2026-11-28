@@ -18,6 +18,7 @@ const BASE_EXCEPTION: &str = "com/jpyrust/JPyRustException";
 const TASK_FAILED: &str = "com/jpyrust/TaskFailedException";
 const WORKER_TIMEOUT: &str = "com/jpyrust/WorkerTimeoutException";
 const WORKER_CRASHED: &str = "com/jpyrust/WorkerCrashedException";
+const GPU_OUT_OF_MEMORY: &str = "com/jpyrust/GpuOutOfMemoryException";
 
 #[cfg(target_os = "windows")]
 type Shm = CustomShmem;
@@ -51,6 +52,7 @@ enum DaemonError {
 impl DaemonError {
     fn into_failure(self) -> Failure {
         match self {
+            DaemonError::Task(message) if is_gpu_out_of_memory(&message) => Failure { class: GPU_OUT_OF_MEMORY, message },
             DaemonError::Task(message) => Failure { class: TASK_FAILED, message },
             DaemonError::Timeout(message) => Failure { class: WORKER_TIMEOUT, message },
             DaemonError::Broken(message) => Failure { class: WORKER_CRASHED, message },
@@ -127,6 +129,7 @@ struct BridgeState {
     whisper_model_path: String,
     startup_timeout: Duration,
     task_timeout: Duration,
+    device: String,
 }
 
 impl BridgeState {
@@ -207,6 +210,10 @@ impl BridgeState {
         child_cmd.arg("--work-dir").arg(&self.work_dir);
         child_cmd.env("PYTHONIOENCODING", "utf-8");
         child_cmd.env("PYTHONPATH", &self.work_dir);
+        if !self.device.is_empty() {
+            child_cmd.env("JPYRUST_DEVICE", &self.device);
+            child_cmd.env("CUDA_VISIBLE_DEVICES", self.device.strip_prefix("cuda:").unwrap_or(""));
+        }
 
         let mut child = child_cmd
             .stdin(Stdio::piped())
@@ -373,6 +380,9 @@ impl BridgeState {
             return Ok(None);
         }
         if response.starts_with("ERROR") {
+            if is_gpu_out_of_memory(&response) {
+                session.daemon = None;
+            }
             return Err(DaemonError::Task(response).into_failure());
         }
         let (length, via_file) = parse_chunk(&response)
@@ -424,8 +434,10 @@ impl BridgeState {
     fn send(&self, session: &mut Session, task_type: &str, request_id: &str, metadata: &str) -> Result<String, DaemonError> {
         self.ensure_daemon(session).map_err(|f| DaemonError::Broken(f.message))?;
         let result = Self::send_execute_command(session.daemon.as_mut().unwrap(), task_type, request_id, metadata, self.task_timeout);
-        if matches!(result, Err(DaemonError::Broken(_)) | Err(DaemonError::Timeout(_))) {
-            session.daemon = None;
+        match &result {
+            Err(DaemonError::Broken(_)) | Err(DaemonError::Timeout(_)) => session.daemon = None,
+            Err(DaemonError::Task(message)) if is_gpu_out_of_memory(message) => session.daemon = None,
+            _ => {}
         }
         result
     }
@@ -603,6 +615,10 @@ fn shm_budget() -> usize {
     MAX_SHM_SIZE
 }
 
+fn is_gpu_out_of_memory(message: &str) -> bool {
+    message.contains("OutOfMemoryError") && message.contains("CUDA out of memory")
+}
+
 fn parse_done(response: &str) -> Option<(usize, bool)> {
     parse_length(response.strip_prefix("DONE ")?)
 }
@@ -676,12 +692,14 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_initNative<'local>(
     whisper_model: JString<'local>,
     startup_timeout_ms: jlong,
     task_timeout_ms: jlong,
+    device: JString<'local>,
 ) {
     run_jni(&mut env, (), |env| {
         let work_dir_str = get_rust_string(env, &work_dir)?;
         let model_path_str = get_rust_string(env, &model_path)?;
         let memory_key_str = get_rust_string(env, &memory_key)?;
         let whisper_model_str = get_rust_string(env, &whisper_model)?;
+        let device_str = get_rust_string(env, &device)?;
         let instance_id: JString = env
             .get_field(&obj, "instanceId", "Ljava/lang/String;")
             .map_err(jerr)?
@@ -705,6 +723,7 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_initNative<'local>(
             whisper_model_path: whisper_model_str,
             startup_timeout: millis(startup_timeout_ms),
             task_timeout: millis(task_timeout_ms),
+            device: device_str,
         });
 
         if let Err(e) = state.start_daemon() {
@@ -1064,6 +1083,15 @@ mod tests {
         assert_eq!(parse_done("DONE 2000000 FILE"), Some((2000000, true)));
         assert_eq!(parse_done("DONE x"), None);
         assert_eq!(parse_done("ERROR boom"), None);
+    }
+
+    #[test]
+    fn cuda_out_of_memory_is_recognized() {
+        assert!(is_gpu_out_of_memory("ERROR OutOfMemoryError: CUDA out of memory. Tried to allocate 2.00 GiB"));
+        assert!(!is_gpu_out_of_memory("ERROR MemoryError: out of memory"));
+        assert!(!is_gpu_out_of_memory("ERROR RuntimeError: CUDA error: device-side assert triggered"));
+        let failure = DaemonError::Task("ERROR OutOfMemoryError: CUDA out of memory.".to_string()).into_failure();
+        assert_eq!(failure.class, GPU_OUT_OF_MEMORY);
     }
 
     #[test]

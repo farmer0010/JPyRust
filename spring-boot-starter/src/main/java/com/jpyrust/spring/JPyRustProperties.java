@@ -16,6 +16,8 @@ public class JPyRustProperties {
     private List<String> extras = new ArrayList<>();
     private Path python;
     private String pythonVersion = "3.11";
+    private String torch = "default";
+    private List<String> devices = new ArrayList<>();
     private int workers = 1;
     private Duration startupTimeout = Duration.ofSeconds(600);
     private Duration taskTimeout = Duration.ofSeconds(300);
@@ -77,6 +79,22 @@ public class JPyRustProperties {
 
     public void setPythonVersion(String pythonVersion) {
         this.pythonVersion = pythonVersion;
+    }
+
+    public String getTorch() {
+        return torch;
+    }
+
+    public void setTorch(String torch) {
+        this.torch = torch;
+    }
+
+    public List<String> getDevices() {
+        return devices;
+    }
+
+    public void setDevices(List<String> devices) {
+        this.devices = devices;
     }
 
     public int getWorkers() {

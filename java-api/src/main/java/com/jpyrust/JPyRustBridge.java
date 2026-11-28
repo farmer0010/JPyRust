@@ -19,12 +19,14 @@ import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Optional;
 import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -86,6 +88,9 @@ public class JPyRustBridge implements AutoCloseable {
     private Path requirementsFile;
     private Path pythonInterpreter;
     private String pythonVersion = DEFAULT_PYTHON_VERSION;
+    private String torchBuild = TorchBuilds.DEFAULT;
+    private String resolvedTorch = TorchBuilds.DEFAULT;
+    private List<String> devices = List.of();
     private final List<Path> moduleDirs = new ArrayList<>();
     private final List<String> extras = new ArrayList<>();
     private String modelPath = "yolov8n.pt";
@@ -173,7 +178,57 @@ public class JPyRustBridge implements AutoCloseable {
             throw new IllegalArgumentException("workers must be at least 1");
         }
         this.workerCount = count;
+        this.devices = List.of();
         return this;
+    }
+
+    public synchronized JPyRustBridge devices(String... devices) {
+        requireNotInitialized("devices");
+        if (devices.length == 0) {
+            throw new IllegalArgumentException("devices needs at least one device");
+        }
+        List<String> checked = new ArrayList<>();
+        for (String device : devices) {
+            String normalized = device.trim().toLowerCase(Locale.ROOT);
+            if (!normalized.matches("cpu|cuda:\\d+")) {
+                throw new IllegalArgumentException("Unknown device: " + device + " (use cuda:0, cuda:1, ... or cpu)");
+            }
+            checked.add(normalized);
+        }
+        this.devices = List.copyOf(checked);
+        this.workerCount = checked.size();
+        return this;
+    }
+
+    public synchronized JPyRustBridge torch(String build) {
+        requireNotInitialized("torch");
+        this.torchBuild = TorchBuilds.validate(build);
+        return this;
+    }
+
+    public synchronized List<String> devices() {
+        return devices;
+    }
+
+    public synchronized String torchBuild() {
+        return initialized ? resolvedTorch : torchBuild;
+    }
+
+    private void applyOverrides() {
+        override("jpyrust.python-version", "JPYRUST_PYTHON_VERSION").ifPresent(this::pythonVersion);
+        override("jpyrust.torch", "JPYRUST_TORCH").ifPresent(this::torch);
+        override("jpyrust.devices", "JPYRUST_DEVICES")
+                .ifPresent(value -> devices(Arrays.stream(value.split(",")).map(String::trim)
+                        .filter(device -> !device.isEmpty()).toArray(String[]::new)));
+        override("jpyrust.workers", "JPYRUST_WORKERS").ifPresent(value -> workers(Integer.parseInt(value.trim())));
+    }
+
+    private static Optional<String> override(String property, String environment) {
+        String value = System.getProperty(property);
+        if (value == null || value.isBlank()) {
+            value = System.getenv(environment);
+        }
+        return value == null || value.isBlank() ? Optional.empty() : Optional.of(value.trim());
     }
 
     private void requireNotInitialized(String method) {
@@ -213,6 +268,7 @@ public class JPyRustBridge implements AutoCloseable {
         this.workDir = workDirectory;
 
         try {
+            applyOverrides();
             Path workPath = Paths.get(workDir);
             if (!Files.exists(workPath)) {
                 Files.createDirectories(workPath);
@@ -224,13 +280,14 @@ public class JPyRustBridge implements AutoCloseable {
             try {
                 long startupMs = startupTimeout.toMillis();
                 long taskMs = taskTimeout.toMillis();
-                initNative(workDir, workDir, modelPath, confidence, memoryKey, whisperModelPath, startupMs, taskMs);
+                initNative(workDir, workDir, modelPath, confidence, memoryKey, whisperModelPath, startupMs, taskMs,
+                        deviceOf(0));
                 idleWorkers = new ArrayBlockingQueue<>(workerCount);
                 idleWorkers.add(this);
                 for (int i = 1; i < workerCount; i++) {
                     JPyRustBridge worker = new JPyRustBridge(instanceId);
                     worker.initNative(workDir, workDir, modelPath, confidence, newMemoryKey(), whisperModelPath,
-                            startupMs, taskMs);
+                            startupMs, taskMs, deviceOf(i));
                     extraWorkers.add(worker);
                     idleWorkers.add(worker);
                 }
@@ -245,6 +302,10 @@ public class JPyRustBridge implements AutoCloseable {
         } catch (Exception e) {
             throw new JPyRustException("Failed to initialize JPyRustBridge", e);
         }
+    }
+
+    private String deviceOf(int worker) {
+        return devices.isEmpty() ? "" : devices.get(worker);
     }
 
     private void setupEmbeddedPython(Path targetDir) throws Exception {
@@ -271,9 +332,31 @@ public class JPyRustBridge implements AutoCloseable {
         }
         writeWorkerConfig(targetDir.resolve("worker.json"));
         String requirementsHash = sha256Hex(Files.readAllBytes(requirements));
+        List<String> torchLines = TorchBuilds.torchRequirements(Files.readString(requirements));
+        resolvedTorch = resolveTorch(torchLines);
 
         deleteRecursively(targetDir.resolve("python_dist"));
-        setupVenvPython(targetDir, requirementsHash, isWindows);
+        setupVenvPython(targetDir, requirementsHash, isWindows, torchLines);
+    }
+
+    private String resolveTorch(List<String> torchLines) {
+        if (torchBuild.equals(TorchBuilds.DEFAULT)) {
+            return TorchBuilds.DEFAULT;
+        }
+        if (torchLines.isEmpty()) {
+            log("INFO", "torch(\"" + torchBuild + "\") ignored: the requirements do not install torch");
+            return TorchBuilds.DEFAULT;
+        }
+        boolean mac = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("mac");
+        String build = torchBuild;
+        if (build.equals(TorchBuilds.AUTO)) {
+            build = TorchBuilds.recommend(mac, TorchBuilds.detectDriverCuda(), TorchBuilds.pinnedTorch(torchLines),
+                    TorchBuilds::published);
+        } else if (mac && !build.equals(TorchBuilds.CPU)) {
+            throw new IllegalStateException("torch(\"" + build + "\") has no macOS wheels; use default or cpu");
+        }
+        log("INFO", "Using torch build " + build);
+        return build;
     }
 
     private void writeWorkerConfig(Path configFile) throws Exception {
@@ -386,7 +469,8 @@ public class JPyRustBridge implements AutoCloseable {
         }
     }
 
-    private void setupVenvPython(Path targetDir, String requirementsHash, boolean isWindows) throws Exception {
+    private void setupVenvPython(Path targetDir, String requirementsHash, boolean isWindows, List<String> torchLines)
+            throws Exception {
         Path markerFile = targetDir.resolve(".installed");
         Path venvDir = targetDir.resolve("venv");
         Path venvPython = venvDir.resolve(isWindows ? "Scripts/python.exe" : "bin/python3");
@@ -396,6 +480,9 @@ public class JPyRustBridge implements AutoCloseable {
         String interpreter = pythonInterpreter != null
                 ? "path:" + pythonInterpreter.toAbsolutePath()
                 : "cpython-" + STANDALONE_PYTHON.get(pythonVersion) + "+" + STANDALONE_RELEASE;
+        if (!resolvedTorch.equals(TorchBuilds.DEFAULT)) {
+            interpreter += " torch=" + resolvedTorch;
+        }
         if (Files.exists(markerFile) && Files.exists(venvPython) && !Files.exists(interpreterFile)) {
             Files.writeString(interpreterFile, interpreter);
         }
@@ -436,6 +523,13 @@ public class JPyRustBridge implements AutoCloseable {
         }
 
         if (!isInstalled(markerFile, requirementsHash)) {
+            if (!resolvedTorch.equals(TorchBuilds.DEFAULT)) {
+                List<String> command = new ArrayList<>(List.of(venvPython.toString(), "-m", "pip", "install",
+                        "--index-url", TorchBuilds.INDEX + resolvedTorch, "--extra-index-url", "https://pypi.org/simple"));
+                command.addAll(torchLines);
+                runOrFail("pip install failed for the " + resolvedTorch + " build of torch in " + venvDir, targetDir,
+                        command.toArray(String[]::new));
+            }
             ProcessBuilder pipPb = new ProcessBuilder(
                     venvPython.toString(), "-m", "pip", "install", "--no-build-isolation",
                     "-r", requirements.toString());
@@ -473,7 +567,7 @@ public class JPyRustBridge implements AutoCloseable {
     }
 
     private native void initNative(String workDir, String sourceScriptDir, String modelPath, float confidence,
-            String memoryKey, String whisperModelPath, long startupTimeoutMs, long taskTimeoutMs);
+            String memoryKey, String whisperModelPath, long startupTimeoutMs, long taskTimeoutMs, String device);
 
     private native void closeNative();
 

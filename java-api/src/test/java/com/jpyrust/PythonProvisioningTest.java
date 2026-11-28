@@ -44,6 +44,25 @@ public class PythonProvisioningTest {
     }
 
     @Test
+    @EnabledIfEnvironmentVariable(named = "JPYRUST_FULL_STACK_TEST", matches = "true")
+    public void torchBuildIsInstalledFromThePytorchIndex(@TempDir(cleanup = CleanupMode.NEVER) Path dir) throws Exception {
+        Path requirements = Files.writeString(dir.resolve("requirements.txt"), "torch==2.2.0\n");
+        Path modules = Files.createDirectories(dir.resolve("tasks"));
+        Files.writeString(modules.resolve("torch_tasks.py"),
+                "import torch\nfrom jpyrust import task\n\n\n@task(\"TORCH\")\ndef version(data, args):\n"
+                        + "    return torch.__version__\n");
+        try (JPyRustBridge bridge = new JPyRustBridge("provision_torch_cpu")
+                .requirements(requirements)
+                .moduleDir(modules)
+                .torch("cpu")) {
+            bridge.initialize(dir.resolve("work").toString());
+            boolean mac = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("mac");
+            assertEquals(mac ? "2.2.0" : "2.2.0+cpu", bridge.call("TORCH", ""));
+            assertEquals("cpu", bridge.torchBuild());
+        }
+    }
+
+    @Test
     public void pythonVersionSwitchRebuildsTheVenv(@TempDir(cleanup = CleanupMode.NEVER) Path dir) throws Exception {
         Path modules = Files.createDirectories(dir.resolve("tasks"));
         Files.writeString(modules.resolve("version_tasks.py"),

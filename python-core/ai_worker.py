@@ -21,16 +21,32 @@ if sys.platform == 'win32':
 
 APP_START_TIME = time.time()
 
-try:
-    import torch
+def detect_device():
+    if os.environ.get("JPYRUST_DEVICE") == "cpu":
+        return "cpu"
+    try:
+        import torch
+    except ImportError:
+        return "cpu"
     if torch.cuda.is_available():
-        DEVICE = 'cuda'
-    elif torch.backends.mps.is_available():
-        DEVICE = 'mps'
-    else:
-        DEVICE = 'cpu'
-except ImportError:
-    DEVICE = 'cpu'
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+def gpu_status():
+    if DEVICE != "cuda":
+        return None
+    import torch
+    free, total = torch.cuda.mem_get_info()
+    return {
+        "name": torch.cuda.get_device_name(0),
+        "visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES", ""),
+        "memory_used_mb": (total - free) // (1024 * 1024),
+        "memory_total_mb": total // (1024 * 1024),
+    }
+
+DEVICE = detect_device()
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--daemon", action="store_true")
@@ -231,6 +247,9 @@ def handle_status(request_id, raw_metadata):
             "device": DEVICE,
             "instance": args.instance_id
         }
+        gpu = gpu_status()
+        if gpu:
+            status["gpu"] = gpu
         _, _, out_info = parse_input_protocol(request_id, raw_metadata)
         written = write_output_data(request_id, [json.dumps(status).encode('utf-8')], out_info)
         return f"DONE {written}"

@@ -71,3 +71,13 @@ tasks.named<ProcessResources>("processResources") {
         include("ai_worker.py", "jpyrust.py", "requirements.txt", "extras/**")
     }
 }
+
+tasks.named<Jar>("jar") {
+    manifest {
+        attributes(
+            "Main-Class" to "com.jpyrust.JPyRustCli",
+            "Implementation-Title" to "JPyRust",
+            "Implementation-Version" to project.version.toString(),
+        )
+    }
+}

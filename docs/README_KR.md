@@ -276,6 +276,24 @@ public class SpeechService {
 
 > 오디오 입력은 WAV 컨테이너(16kHz, mono, 16-bit PCM)를 가정합니다. `confidence`는 보정된 확률이 아니라 Whisper 세그먼트별 `avg_logprob`에서 유도한 근사치입니다.
 
+### 7. GPU와 환경별 버전 선택
+
+작업은 각 라이브러리로 GPU를 쓰고, `jpyrust.config["device"]`는 `cuda`, `mps`, `cpu` 중 하나입니다. 같은 코드를 머신마다 맞추는 설정은 세 가지입니다.
+
+```java
+new JPyRustBridge("detector")
+        .devices("cuda:0", "cuda:1")   // GPU마다 워커 하나, 작업에서는 각자 cuda:0으로 보임
+        .torch("auto")                 // NVIDIA 드라이버에 맞는 torch 빌드, GPU가 없으면 cpu
+        .extras("vision");
+```
+
+```bash
+java -jar jpyrust-2.2.0.jar doctor                       # 이 머신의 환경과 추천 설정
+java -Djpyrust.torch=cpu -jar app.jar                    # 코드 수정 없이 실행할 때 덮어쓰기
+```
+
+CUDA 메모리 부족은 `GpuOutOfMemoryException`으로 오고, 메모리를 비우도록 그 워커를 재시작합니다. `STATUS`와 Actuator 헬스 체크에 GPU 이름과 메모리가 나옵니다. 자세한 내용은 [환경별 버전 선택](API.md#choosing-versions-per-environment)과 [명령줄](API.md#command-line)을 보세요. CI에는 GPU 러너가 없어 GPU 경로는 자동 테스트되지 않습니다.
+
 ---
 
 ## 🛠️ 설정 및 문제 해결 (Troubleshooting)

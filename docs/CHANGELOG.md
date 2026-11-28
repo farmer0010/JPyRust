@@ -1,5 +1,12 @@
 # Changelog
 
+* **Unreleased**
+    * **Feature:** `devices("cuda:0", "cuda:1")` runs one worker per GPU: each worker gets its own `CUDA_VISIBLE_DEVICES`, so task code always uses `cuda:0`. `"cpu"` hides every GPU from a worker.
+    * **Feature:** `torch("auto" | "cpu" | "cu121" | ...)` chooses which torch build pip installs. `auto` reads the NVIDIA driver's CUDA version and picks the newest build published for the pinned torch version, or `cpu` on machines without a GPU (avoiding gigabytes of CUDA libraries).
+    * **Feature:** Settings can be chosen when the application starts, without code changes: `-Djpyrust.python-version`, `-Djpyrust.torch`, `-Djpyrust.devices`, `-Djpyrust.workers`, or the matching `JPYRUST_*` environment variables. The Spring starter adds `jpyrust.torch` and `jpyrust.devices`.
+    * **Feature:** The JAR is runnable: `java -jar jpyrust-<version>.jar doctor` reports the machine's GPU and recommended settings, `setup` provisions an instance ahead of time (for example in a Docker build).
+    * **Feature:** CUDA out-of-memory errors throw `GpuOutOfMemoryException` (a `TaskFailedException`) and restart the worker to release GPU memory. `STATUS` and the health check include the GPU name and memory use.
+
 * **v2.1.0**
     * **Behavior Change:** Windows downloads CPython 3.11.18 from python-build-standalone and builds a venv like macOS and Linux, instead of python.org's embeddable 3.11.9 plus a pip wheel. Existing Windows instance directories are reinstalled once on the next `initialize()`.
     * **Feature:** Streaming. A task that `yield`s can be read with `callStream(task, input, args)` as a `java.util.stream.Stream`; values arrive as they are produced, the worker waits for Java before producing the next one, and closing the stream stops the generator (its `finally` blocks run). The task timeout applies per value. `JPyRustTemplate.callStream` records one timer per stream, and `examples/spring-boot` serves a generator as Server-Sent Events. Calling a generator task with `call` now fails with a clear `TaskFailedException`.

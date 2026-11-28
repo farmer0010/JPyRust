@@ -30,6 +30,8 @@ try (JPyRustBridge bridge = new JPyRustBridge("orders")   // instance id: names 
 | `pythonVersion(String version)` | `"3.11"` | CPython to download: `"3.11"`, `"3.12"`, `"3.13"` or `"3.14"`. A change rebuilds the venv on the next `initialize()`. The built-in extras need 3.11 or 3.12. |
 | `python(Path interpreter)` | downloaded CPython | Builds the venv from an existing interpreter (`--system-site-packages`) instead of downloading one. Overrides `pythonVersion`. |
 | `workers(int count)` | 1 | Number of Python processes. Calls from different threads run in parallel, one per process. |
+| `devices(String... devices)` | none | One worker per entry, each pinned to a device: `"cuda:N"` sets `CUDA_VISIBLE_DEVICES=N` for that worker (the task always sees `cuda:0`), `"cpu"` hides every GPU. Replaces `workers(n)`; the later of the two calls wins. |
+| `torch(String build)` | `"default"` | Which torch build pip installs when the requirements include `torch`: `"default"` (PyPI), `"cpu"`, a CUDA build such as `"cu121"`, a ROCm build such as `"rocm6.2"`, or `"auto"` (the newest CUDA build the NVIDIA driver supports and that is published for the pinned torch version; `cpu` without an NVIDIA GPU; `default` on macOS). A change rebuilds the venv. |
 | `timeouts(Duration startup, Duration task)` | 600 s, 300 s | Startup covers interpreter start and module import (model loading). A task that exceeds its timeout kills the worker. |
 | `model(String path, float confidence)` | `yolov8n.pt`, 0.5 | YOLO model and threshold for the `vision` extra. |
 | `whisperModel(String path)` | none | Whisper model name or checkpoint for the `audio` extra. |
@@ -117,6 +119,7 @@ All are unchecked.
 | `TaskFailedException` | The Python task raised; the message carries `ExceptionType: message` | Keeps running |
 | `WorkerTimeoutException` | The task exceeded the task timeout, or startup exceeded the startup timeout | Killed; respawned on the next call |
 | `WorkerCrashedException` | The process exited or died (segfault, `os._exit`, OOM kill) | Respawned on the next call |
+| `GpuOutOfMemoryException` | The task raised CUDA `OutOfMemoryError`; a subclass of `TaskFailedException` | Restarted, so the next call starts with free GPU memory |
 | `JPyRustException` | Base class; also thrown for provisioning failures (`Failed to initialize JPyRustBridge`) and invalid buffers | — |
 
 ## Python side
@@ -134,6 +137,41 @@ def score(data: bytes, args: str):
 * Module-level code runs once per worker process at startup, so load models there.
 * `config` is a dict with `model`, `conf`, `whisper_model` and `device` (`cuda`, `mps` or `cpu`, detected when `torch` is installed).
 * A module that fails to import is reported on the worker's stderr and skipped; the other modules still load.
+
+## Choosing versions per environment
+
+Every setting that depends on the machine can be set when the application starts, without changing code. A system property wins over an environment variable, and both win over the builder.
+
+| System property | Environment variable | Same as |
+| --- | --- | --- |
+| `jpyrust.python-version` | `JPYRUST_PYTHON_VERSION` | `pythonVersion(...)` |
+| `jpyrust.torch` | `JPYRUST_TORCH` | `torch(...)` |
+| `jpyrust.devices` (comma-separated) | `JPYRUST_DEVICES` | `devices(...)` |
+| `jpyrust.workers` | `JPYRUST_WORKERS` | `workers(...)` |
+
+```bash
+java -Djpyrust.torch=auto -Djpyrust.devices=cuda:0,cuda:1 -jar app.jar     # GPU server
+JPYRUST_TORCH=cpu java -jar app.jar                                         # CPU server, no CUDA libraries
+```
+
+The override applies to every bridge in the JVM. `torchBuild()` returns the build that was installed, after `auto` is resolved.
+
+## Command line
+
+The JPyRust JAR is runnable. Download `jpyrust-<version>.jar` from Maven Central or a GitHub Release.
+
+```bash
+java -jar jpyrust-2.2.0.jar doctor
+java -jar jpyrust-2.2.0.jar setup --instance detector --torch auto --extras vision --python-version 3.11
+```
+
+| Command | Does |
+| --- | --- |
+| `doctor` | Prints the OS, Java, NVIDIA GPUs and driver CUDA version, the cached Python builds, and the recommended `torch` build and `devices` with the matching `-D` flags |
+| `setup [options]` | Runs the same provisioning as `initialize()` into `~/.jpyrust/<instance>` (or `--work-dir`), starts a worker once and prints its status. Options: `--instance`, `--work-dir`, `--python-version`, `--python`, `--torch`, `--extras a,b`, `--requirements`, `--module-dir` (repeatable) |
+| `version` | Prints the version |
+
+Run `setup` in a Docker build step with the same instance id and options as the application, and the application starts without downloading anything.
 
 ## Spring Boot starter
 
@@ -159,6 +197,8 @@ jpyrust:
 | `jpyrust.python-version` | `3.11` | `pythonVersion(String)` |
 | `jpyrust.python` | none | `python(Path)` |
 | `jpyrust.workers` | `1` | `workers(int)` |
+| `jpyrust.devices` | none | `devices(...)`, a list |
+| `jpyrust.torch` | `default` | `torch(String)` |
 | `jpyrust.startup-timeout`, `jpyrust.task-timeout` | `600s`, `300s` | `timeouts(...)` |
 | `jpyrust.model`, `jpyrust.confidence` | `yolov8n.pt`, `0.5` | `model(...)` |
 | `jpyrust.whisper-model` | none | `whisperModel(...)` |

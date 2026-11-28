@@ -79,6 +79,15 @@ public class WorkerBehaviorTest {
             "    raise ValueError(\"broken stream\")",
             "",
             "",
+            "class OutOfMemoryError(RuntimeError):",
+            "    pass",
+            "",
+            "",
+            "@task(\"GPU_OOM\")",
+            "def gpu_oom(data, args):",
+            "    raise OutOfMemoryError(\"CUDA out of memory. Tried to allocate 2.00 GiB\")",
+            "",
+            "",
             "@task(\"SLOW_STREAM\")",
             "def slow_stream(data, args):",
             "    yield \"first\"",
@@ -205,5 +214,20 @@ public class WorkerBehaviorTest {
             assertThrows(WorkerTimeoutException.class, chunks::hasNext);
         }
         assertEquals("recovered", bridge.call("ECHO", "recovered"));
+    }
+
+    @Test
+    @Timeout(60)
+    public void cudaOutOfMemoryIsItsOwnExceptionAndRestartsTheWorker() throws Exception {
+        JPyRustBridge single = new JPyRustBridge("worker_behavior_oom")
+                .requirements(Files.writeString(dir.resolve("oom-requirements.txt"), ""))
+                .moduleDir(dir.resolve("tasks"));
+        try (single) {
+            single.initialize(dir.resolve("oom-work").toString());
+            String before = single.call("PID", "");
+            GpuOutOfMemoryException error = assertThrows(GpuOutOfMemoryException.class, () -> single.call("GPU_OOM", ""));
+            assertTrue(error.getMessage().contains("CUDA out of memory"), error.getMessage());
+            assertNotEquals(before, single.call("PID", ""));
+        }
     }
 }

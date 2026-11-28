@@ -1,5 +1,12 @@
 # 변경 이력
 
+* **Unreleased**
+    * **기능:** `devices("cuda:0", "cuda:1")`로 GPU마다 워커 하나를 띄웁니다. 워커마다 `CUDA_VISIBLE_DEVICES`가 달라서 작업 코드는 항상 `cuda:0`만 씁니다. `"cpu"`는 그 워커에서 GPU를 모두 숨깁니다.
+    * **기능:** `torch("auto" | "cpu" | "cu121" | ...)`로 pip이 설치할 torch 빌드를 고릅니다. `auto`는 NVIDIA 드라이버의 CUDA 버전을 읽어 고정된 torch 버전용으로 배포된 가장 새 빌드를 고르고, GPU가 없으면 `cpu`를 골라 수 GB의 CUDA 라이브러리를 피합니다.
+    * **기능:** 코드 수정 없이 실행할 때 설정을 고를 수 있습니다. `-Djpyrust.python-version`, `-Djpyrust.torch`, `-Djpyrust.devices`, `-Djpyrust.workers` 또는 같은 이름의 `JPYRUST_*` 환경변수입니다. Spring starter에는 `jpyrust.torch`, `jpyrust.devices`가 추가됩니다.
+    * **기능:** JAR을 바로 실행할 수 있습니다. `java -jar jpyrust-<version>.jar doctor`는 머신의 GPU와 추천 설정을 보여 주고, `setup`은 인스턴스를 미리 설치합니다(예: Docker 빌드).
+    * **기능:** CUDA 메모리 부족은 `GpuOutOfMemoryException`(`TaskFailedException` 하위)으로 오고, GPU 메모리를 비우도록 워커를 재시작합니다. `STATUS`와 헬스 체크에 GPU 이름과 메모리 사용량이 나옵니다.
+
 * **v2.1.0**
     * **동작 변경:** Windows도 python.org의 임베디드 3.11.9와 pip wheel 대신 python-build-standalone의 CPython 3.11.18을 내려받아 macOS·Linux와 같은 방식으로 venv를 만듭니다. 기존 Windows 인스턴스 디렉터리는 다음 `initialize()` 때 한 번 다시 설치됩니다.
     * **기능:** 스트리밍. `yield`하는 작업을 `callStream(task, input, args)`로 `java.util.stream.Stream`처럼 읽습니다. 값은 만들어지는 대로 도착하고, 워커는 Java가 다음 값을 요청할 때까지 기다리며, 스트림을 닫으면 제너레이터가 멈춥니다(`finally` 블록 실행). 작업 타임아웃은 값 하나마다 적용됩니다. `JPyRustTemplate.callStream`은 스트림당 타이머 하나를 기록하고, `examples/spring-boot`는 제너레이터를 Server-Sent Events로 보냅니다. 제너레이터 작업을 `call`로 부르면 이제 명확한 `TaskFailedException`이 납니다.
