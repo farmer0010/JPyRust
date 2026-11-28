@@ -9,14 +9,13 @@ crate-type = ["cdylib"]
 
 [dependencies]
 jni = "0.21.1"
-lazy_static = "1.4"
 shared_memory = "0.12"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.52", features = [
+windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_System_Memory",
     "Win32_Security",
