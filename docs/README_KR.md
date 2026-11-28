@@ -137,8 +137,8 @@ float32 값 1,000,000개 배열을 numpy로 처리해 돌려받는 데 `NDArray`
 
 ```kotlin
 dependencies {
-    implementation("io.github.farmer0010:jpyrust:2.0.1")
-    // Spring Boot: implementation("io.github.farmer0010:jpyrust-spring-boot-starter:2.0.1")
+    implementation("io.github.farmer0010:jpyrust:2.1.0")
+    // Spring Boot: implementation("io.github.farmer0010:jpyrust-spring-boot-starter:2.1.0")
 }
 ```
 
