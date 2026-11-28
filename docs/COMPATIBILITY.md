@@ -26,7 +26,7 @@ The public API is:
 
 * the public classes and methods in `com.jpyrust` (`JPyRustBridge`, `NDArray` and the exception classes),
 * the Python `jpyrust` module (`task`, `config`),
-* the task contract: `(data: bytes | numpy.ndarray, args: str)` in, `bytes`/`str`/`numpy.ndarray`/JSON-serializable out, with arrays as NumPy `.npy` buffers,
+* the task contract: `(data: bytes | numpy.ndarray, args: str)` in, `bytes`/`str`/`numpy.ndarray`/JSON-serializable out (or a generator of those for `callStream`), with arrays as NumPy `.npy` buffers,
 * the names and behavior of the built-in extras and their tasks.
 
 The wire protocol between the native library and `ai_worker.py`, the layout of `~/.jpyrust`, `NativeLoader` and `runPythonRaw` are internal and can change in any release.

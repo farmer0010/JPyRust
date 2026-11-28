@@ -1,138 +1,88 @@
-# JPyRust Architecture & Guidelines
+# JPyRust Architecture
 
-## 1. Project Vision
+How a call travels from Java to Python and back, and where each piece of the code lives. The wire protocol described here is internal (see [COMPATIBILITY.md](COMPATIBILITY.md)); it is documented for contributors.
 
-**JPyRust** is a high-performance bridge library enabling Java applications to use the Python AI ecosystem with **Production-Grade Performance**.
-
-The system achieves **778x speedup** (7s → 9ms) through:
-- **Daemon Mode**: Python stays warm with models pre-loaded
-- **UUID Isolation**: Thread-safe concurrent request handling
-- **Task Dispatching**: Multiple AI tasks via single daemon
-
----
-
-## 2. Core Architecture (v2.0 - Universal Bridge)
+## 1. Layers
 
 ```
-[Java App] -> (JNI) -> [Rust Bridge] -> (stdin/stdout) -> [Python Daemon]
-                              |
-                       File-based IPC
-                    input_{uuid}.dat
-                    output_{uuid}.dat
+Java (JPyRustBridge, NDArray)
+   │  JNI: executeTask / streamStart / streamNext / streamCancel
+Rust (rust-bridge/src/lib.rs, one BridgeState per worker)
+   │  stdin/stdout lines            shared memory or files for the data
+Python (python-core/ai_worker.py, one process per worker)
+   │  @task functions from jpyrust.py, extras/*.py and moduleDir(...)
 ```
 
-### Layer 1: Java API (User-Facing)
-- **Controllers**: `AIImageController`, `AITextController`
-- **Bridge**: `JPyRustBridge.java` with `executeTask()` native method
-- **Config**: `application.yml` for paths and settings
+| Layer | Owns |
+| --- | --- |
+| `JPyRustBridge.java` | Provisioning (download CPython, venv, pip), the worker pool (`workers(n)`), `call` / `callAsync` / `callStream`, the exception types |
+| `NativeLoader.java` | Extracting `natives/<os>-<arch>/jpyrust.*` and the Python files from the JAR |
+| `NDArray.java` | Typed arrays as NumPy `.npy` bytes |
+| `lib.rs` | One Python process per `BridgeState`: spawn, `READY` handshake, timeouts, restart after a crash, shared-memory buffers, the line protocol |
+| `ai_worker.py` | The daemon loop, task registry, input decoding and output encoding |
+| `jpyrust.py` | The public Python API: `@task`, `config` |
 
-### Layer 2: Rust Bridge (Process Manager)
-- **Tech**: `jni-rs`, `lazy_static`
-- **Role**: Spawn and manage Python daemon lifecycle
-- **IPC**: stdin/stdout with `EXECUTE` protocol
-- **Resilience**: Auto-restart on daemon crash
+## 2. Worker pool
 
-### Layer 3: Python Daemon (AI Worker)
-- **File**: `ai_worker.py`
-- **Mode**: Persistent loop (not one-shot)
-- **Tasks**: YOLO (image), SENTIMENT (text)
-- **Models**: Loaded once at startup
+`workers(n)` creates `n` `BridgeState`s, each with its own Python process, and keeps them in a blocking queue. A call takes a worker, runs, and puts it back, so calls from `n` threads run in parallel and a call never shares a process with another. A stream keeps its worker until it ends or is closed. `close()` takes the pool's write lock, so it waits for running calls and then kills every process.
 
----
+## 3. Line protocol
 
-## 3. IPC Protocol
+Rust writes one command line to the worker's stdin and reads lines from its stdout until it sees a reply; any other output (prints from user code) is ignored.
 
-### Command Format
+| Rust → Python | Python → Rust | Meaning |
+| --- | --- | --- |
+| *(start)* | `READY` | Modules imported; sent once at startup |
+| `EXECUTE <task> <id> <metadata...>` | `DONE <n>` | Output of `n` bytes is in the output buffer |
+| | `DONE <n> FILE` | Output did not fit; it is in `output_<id>.dat` |
+| | `ERROR <message>` | The task raised; becomes `TaskFailedException` |
+| `STREAM <task> <id> <metadata...>` | `CHUNK <n>` / `CHUNK <n> FILE` | One yielded value, placed like a `DONE` result |
+| `NEXT` | next `CHUNK`, `END` or `ERROR` | Sent after Rust has read a chunk; Python resumes the generator only now |
+| `CANCEL` | `END` | Sent instead of `NEXT` when Java closes the stream; Python closes the generator |
+| `EXIT` | *(process exits)* | |
+
+`<metadata...>` is `SHMEM <input name> <input length> <output name> <output capacity> <args...>` when shared memory is used, otherwise just `<args...>` with the input in `input_<id>.dat`. Data files are a 4-byte big-endian length followed by the bytes.
+
+Every wait for a reply has a deadline: the startup timeout for `READY`, the task timeout for each `DONE`, `CHUNK` or `END`. A missed deadline or a closed pipe kills the process; the next call starts a new one.
+
+## 4. Shared memory
+
+Each worker owns two named shared-memory buffers, input and output, that are reused across calls. They start at 1 MB and grow to the next power of two when a payload needs more, up to 256 MB (on Linux, at most half of the free space in `/dev/shm`). Python attaches to them by name and caches the handle. An output larger than the output buffer is written to a file for that call, and the buffer grows for the next one. If shared memory cannot be created at all, the worker switches to files for the rest of its life.
+
+## 5. Data conversion in the worker
+
+| Input bytes | Task receives |
+| --- | --- |
+| start with `\x93NUMPY` | a read-only `numpy.ndarray` viewing the received bytes |
+| anything else | `bytes` |
+
+| Task returns | Sent as |
+| --- | --- |
+| `bytes`, `bytearray`, `memoryview` | as-is |
+| `str` | UTF-8 |
+| `numpy.ndarray` | `.npy` (little-endian, C order), header and data written separately into the buffer |
+| an iterator or generator | `ERROR` for `EXECUTE`; one `CHUNK` per element for `STREAM` |
+| anything else | JSON |
+
+## 6. Adding a task
+
+Register a function with `@task` in a module passed to `moduleDir(...)`; there is nothing to change in Java or Rust.
+
+```python
+from jpyrust import task
+
+@task("RESIZE")
+def resize(image, args):          # numpy.ndarray when Java sends an NDArray
+    width, height = map(int, args.split())
+    return cv2.resize(image, (width, height))
 ```
-EXECUTE <task_type> <request_id> <metadata...>
-```
 
-### Supported Tasks
-| Task | Metadata | Input File | Output File |
-|------|----------|------------|-------------|
-| YOLO | `width height channels` | Raw BGR bytes | JPEG bytes |
-| SENTIMENT | `NONE` | UTF-8 text | UTF-8 result |
+Built-in tasks live in `python-core/extras/<name>.py` with their requirements in `<name>.txt`, and are loaded only when `extras("<name>")` is set.
 
-### Response Format
-```
-READY              # Initialization complete
-DONE <result>      # Success
-ERROR <message>    # Failure
-```
+## 7. Rules for contributors
 
----
-
-## 4. File-Based Data Transfer
-
-### Why Files Instead of stdin?
-- Binary data (images) is complex over stdin
-- UUID-named files enable concurrent safety
-- Easy debugging (files persist for inspection)
-
-### File Naming Convention
-```
-{work_dir}/input_{uuid}.dat   # Request data
-{work_dir}/output_{uuid}.dat  # Response data
-```
-
-### File Format
-```
-[4 bytes: length (big-endian)] [N bytes: data]
-```
-
----
-
-## 5. Performance Characteristics
-
-| Metric | Value | Notes |
-|--------|-------|-------|
-| First Request | ~7s | Model loading (YOLO) |
-| Text Analysis | ~9ms | After warmup |
-| Image Detection | ~60-100ms | Includes resize + inference |
-| Memory (Daemon) | ~500MB | YOLO model in GPU/CPU |
-
----
-
-## 6. Development Rules
-
-1. **UUID for Everything**: Never use fixed filenames
-2. **Cleanup After Use**: Delete temp files post-processing
-3. **Graceful Errors**: Return `ERROR` message, don't crash
-4. **Flush Always**: Use `flush=True` on Python prints
-5. **Timeout Protection**: 60s limit on daemon startup
-
----
-
-## 7. Extension Guide
-
-### Adding a New Task
-
-1. **Python** (`ai_worker.py`):
-   ```python
-   def handle_newtask(request_id, metadata):
-       # Read input_{request_id}.dat
-       # Process
-       # Write output_{request_id}.dat
-       return "DONE result"
-   
-   TASK_HANDLERS["NEWTASK"] = handle_newtask
-   ```
-
-2. **Java** (`JPyRustBridge.java`):
-   ```java
-   public byte[] processNewTask(String input) {
-       return execute("NEWTASK", "NONE", input.getBytes());
-   }
-   ```
-
-3. **Controller**:
-   ```java
-   @PostMapping("/api/ai/newtask")
-   public ResponseEntity<String> newTask(@RequestBody String input) {
-       return ResponseEntity.ok(bridge.processNewTask(input));
-   }
-   ```
-
----
-
-<p align="center"><i>Last updated: 2026-01-26 (v2.0 Universal Bridge)</i></p>
+1. Every reply line is printed with `flush=True`; a buffered reply looks like a hang.
+2. Request ids are UUIDs, so file names never collide between workers.
+3. A Python exception must become an `ERROR` line, never a crashed process.
+4. Anything that waits on Python has a timeout and kills the process when it fires.
+5. Changes to the protocol go in `lib.rs`, `ai_worker.py`, the Python tests and this document together.

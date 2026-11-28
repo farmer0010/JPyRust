@@ -1,12 +1,14 @@
 # Spring Boot service
 
-A REST endpoint backed by a Python function, wired by `jpyrust-spring-boot-starter`: the bridge is configured from `application.yml`, calls go through `JPyRustTemplate`, Micrometer records `jpyrust.calls`, and `/actuator/health` reports the workers.
+A REST endpoint backed by a Python function, and a Server-Sent Events endpoint fed by a Python generator, wired by `jpyrust-spring-boot-starter`: the bridge is configured from `application.yml`, calls go through `JPyRustTemplate`, Micrometer records `jpyrust.calls`, and `/actuator/health` reports the workers.
 
 ```bash
 make native                                  # from the repository root, once
 ./gradlew :examples:spring-boot:bootRun
 
 curl -s -X POST localhost:8080/sentiment -H 'Content-Type: text/plain' -d 'the new build is fast and great'
+curl -sN -X POST localhost:8080/sentiment/stream -H 'Content-Type: text/plain' \
+  -d 'The build is fast. The docs are bad. I love it!'
 curl -s localhost:8080/actuator/health
 curl -s 'localhost:8080/actuator/metrics/jpyrust.calls?tag=task:SENTIMENT'
 ```

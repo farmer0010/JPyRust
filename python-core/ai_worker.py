@@ -8,6 +8,7 @@ import io
 import platform
 import importlib.util
 import glob
+import collections.abc
 import json
 import math
 
@@ -129,14 +130,42 @@ def to_output_parts(result):
         return encode_array(result)
     return [json.dumps(result, ensure_ascii=False).encode("utf-8")]
 
+def error_line(e):
+    return "ERROR " + " ".join(f"{type(e).__name__}: {e}".split())
+
+def is_stream(result):
+    return isinstance(result, collections.abc.Iterator)
+
 def make_task_handler(fn):
     def handle(request_id, raw_metadata):
         try:
             data, metadata, out_info = parse_input_protocol(request_id, raw_metadata)
-            written = write_output_data(request_id, to_output_parts(fn(decode_input(data), " ".join(metadata))), out_info)
+            result = fn(decode_input(data), " ".join(metadata))
+            if is_stream(result):
+                getattr(result, "close", lambda: None)()
+                raise TypeError("the task yields results; call it with callStream")
+            written = write_output_data(request_id, to_output_parts(result), out_info)
             return f"DONE {written}"
         except Exception as e:
-            return "ERROR " + " ".join(f"{type(e).__name__}: {e}".split())
+            return error_line(e)
+
+    def stream(request_id, raw_metadata):
+        try:
+            data, metadata, out_info = parse_input_protocol(request_id, raw_metadata)
+            result = fn(decode_input(data), " ".join(metadata))
+            chunks = result if is_stream(result) else iter([result])
+            try:
+                for chunk in chunks:
+                    print(f"CHUNK {write_output_data(request_id, to_output_parts(chunk), out_info)}", flush=True)
+                    if sys.stdin.readline().strip().upper() != "NEXT":
+                        break
+            finally:
+                getattr(chunks, "close", lambda: None)()
+            return "END"
+        except Exception as e:
+            return error_line(e)
+
+    handle.stream = stream
     return handle
 
 _shared_memory = {}
@@ -221,10 +250,13 @@ def daemon_loop():
         if not parts: continue
         cmd = parts[0].upper()
         if cmd == "EXIT": break
-        if cmd == "EXECUTE" and len(parts) >= 3:
+        if cmd in ("EXECUTE", "STREAM") and len(parts) >= 3:
             task_type, req_id = parts[1].upper(), parts[2]
             handler = TASK_HANDLERS.get(task_type)
-            if handler: print(handler(req_id, parts[3:]), flush=True)
+            if handler and cmd == "STREAM":
+                streamer = getattr(handler, "stream", None)
+                print(streamer(req_id, parts[3:]) if streamer else f"ERROR Task {task_type} cannot be streamed", flush=True)
+            elif handler: print(handler(req_id, parts[3:]), flush=True)
             elif task_type in EXTRA_TASKS: print(f"ERROR Task {task_type} requires extras(\"{EXTRA_TASKS[task_type]}\")", flush=True)
             else: print(f"ERROR Unknown task: {task_type}", flush=True)
 

@@ -97,6 +97,13 @@ struct SharedBuffer {
     capacity: usize,
 }
 
+struct OpenStream {
+    task_type: String,
+    request_id: String,
+    output_capacity: Option<usize>,
+    awaiting_ack: bool,
+}
+
 #[derive(Default)]
 struct Session {
     daemon: Option<PythonDaemon>,
@@ -105,6 +112,7 @@ struct Session {
     wanted_output: usize,
     generation: u32,
     shm_disabled: bool,
+    stream: Option<OpenStream>,
 }
 
 struct BridgeState {
@@ -262,6 +270,157 @@ impl BridgeState {
         self.ensure_daemon(&mut session)
     }
 
+    fn write_line(&self, session: &mut Session, line: &str) -> Result<(), DaemonError> {
+        let daemon = session.daemon.as_mut().ok_or_else(|| DaemonError::Broken("Python daemon is not running".to_string()))?;
+        let written = daemon
+            .stdin
+            .write_all(line.as_bytes())
+            .and_then(|_| daemon.stdin.flush())
+            .map_err(|e| DaemonError::Broken(e.to_string()));
+        if written.is_err() {
+            session.daemon = None;
+        }
+        written
+    }
+
+    fn read_stream_line(&self, session: &mut Session, task_type: &str) -> Result<String, DaemonError> {
+        let daemon = session.daemon.as_ref().ok_or_else(|| DaemonError::Broken("Python daemon is not running".to_string()))?;
+        let result = daemon
+            .wait_for_line(self.task_timeout, |line| {
+                line.starts_with("CHUNK") || line == "END" || line.starts_with("ERROR")
+            })
+            .map_err(|e| match e {
+                DaemonError::Timeout(msg) => DaemonError::Timeout(format!("{} (stream {}, restarting daemon)", msg, task_type)),
+                DaemonError::Broken(msg) => DaemonError::Broken(format!("{} (stream {}, restarting daemon)", msg, task_type)),
+                other => other,
+            });
+        if result.is_err() {
+            session.daemon = None;
+        }
+        result
+    }
+
+    fn stream_start(&self, task_type: &str, request_id: &str, metadata: &str, data: &[u8]) -> Result<(), Failure> {
+        let mut session = self.lock_session();
+        if session.stream.is_some() {
+            return Err("A stream is already open on this worker".into());
+        }
+        self.ensure_daemon(&mut session)?;
+        let mut output_capacity = None;
+        let mut command_metadata = metadata.to_string();
+        if !session.shm_disabled {
+            match self.prepare_shm(&mut session, metadata, data) {
+                Ok((shm_metadata, capacity)) => {
+                    command_metadata = shm_metadata;
+                    output_capacity = Some(capacity);
+                }
+                Err(ShmFailure::Unavailable(reason)) => {
+                    self.log_to_java("WARN", &format!("[IPC] Shared memory unavailable ({}), using files", reason));
+                    session.shm_disabled = true;
+                }
+                Err(ShmFailure::TooLarge) => {}
+                Err(ShmFailure::Daemon(e)) => return Err(e.into_failure()),
+                Err(ShmFailure::Other(msg)) => return Err(msg.into()),
+            }
+        }
+        if output_capacity.is_none() {
+            let input_file = format!("{}/input_{}.dat", self.work_dir, request_id);
+            write_data_file(&input_file, data)
+                .map_err(|e| Failure::from(format!("Failed to write input file {}: {}", input_file, e)))?;
+        }
+        let command = format!("STREAM {} {} {}\n", task_type, request_id, command_metadata);
+        self.write_line(&mut session, &command).map_err(DaemonError::into_failure)?;
+        session.stream = Some(OpenStream {
+            task_type: task_type.to_string(),
+            request_id: request_id.to_string(),
+            output_capacity,
+            awaiting_ack: false,
+        });
+        Ok(())
+    }
+
+    fn stream_next(&self) -> Result<Option<Vec<u8>>, Failure> {
+        let mut session = self.lock_session();
+        let (task_type, request_id, output_capacity, awaiting_ack) = match session.stream.as_ref() {
+            Some(open) => (open.task_type.clone(), open.request_id.clone(), open.output_capacity, open.awaiting_ack),
+            None => return Ok(None),
+        };
+        let result = self.next_chunk(&mut session, &task_type, &request_id, output_capacity, awaiting_ack);
+        match &result {
+            Ok(Some(_)) => {
+                if let Some(open) = session.stream.as_mut() {
+                    open.awaiting_ack = true;
+                }
+            }
+            _ => self.finish_stream(&mut session, &request_id),
+        }
+        result
+    }
+
+    fn next_chunk(
+        &self,
+        session: &mut Session,
+        task_type: &str,
+        request_id: &str,
+        output_capacity: Option<usize>,
+        awaiting_ack: bool,
+    ) -> Result<Option<Vec<u8>>, Failure> {
+        if awaiting_ack {
+            self.write_line(session, "NEXT\n").map_err(DaemonError::into_failure)?;
+        }
+        let response = self.read_stream_line(session, task_type).map_err(DaemonError::into_failure)?;
+        if response == "END" {
+            return Ok(None);
+        }
+        if response.starts_with("ERROR") {
+            return Err(DaemonError::Task(response).into_failure());
+        }
+        let (length, via_file) = parse_chunk(&response)
+            .ok_or_else(|| Failure::from(format!("Malformed response from Python daemon: {}", response)))?;
+        if via_file || output_capacity.is_none() {
+            let output_file = format!("{}/output_{}.dat", self.work_dir, request_id);
+            let chunk = read_data_file(&output_file)
+                .map_err(|e| Failure::from(format!("Failed to read output file {}: {}", output_file, e)));
+            let _ = std::fs::remove_file(&output_file);
+            return chunk.map(Some);
+        }
+        if length > output_capacity.unwrap_or(0) {
+            return Err(format!("Chunk size {} bytes exceeds shared memory capacity", length).into());
+        }
+        Ok(Some(unsafe { session.output.as_ref().unwrap().shm.as_slice()[..length].to_vec() }))
+    }
+
+    fn stream_cancel(&self) -> Result<(), Failure> {
+        let mut session = self.lock_session();
+        let (task_type, request_id, mut awaiting_ack) = match session.stream.as_ref() {
+            Some(open) => (open.task_type.clone(), open.request_id.clone(), open.awaiting_ack),
+            None => return Ok(()),
+        };
+        let result = loop {
+            if awaiting_ack {
+                if let Err(e) = self.write_line(&mut session, "CANCEL\n") {
+                    break Err(e.into_failure());
+                }
+            }
+            match self.read_stream_line(&mut session, &task_type) {
+                Ok(line) if line.starts_with("CHUNK") => {
+                    let _ = std::fs::remove_file(format!("{}/output_{}.dat", self.work_dir, request_id));
+                    awaiting_ack = true;
+                }
+                Ok(_) => break Ok(()),
+                Err(e) => break Err(e.into_failure()),
+            }
+        };
+        self.finish_stream(&mut session, &request_id);
+        result
+    }
+
+    fn finish_stream(&self, session: &mut Session, request_id: &str) {
+        session.stream = None;
+        let _ = std::fs::remove_file(format!("{}/input_{}.dat", self.work_dir, request_id));
+        let _ = std::fs::remove_file(format!("{}/output_{}.dat", self.work_dir, request_id));
+    }
+
     fn send(&self, session: &mut Session, task_type: &str, request_id: &str, metadata: &str) -> Result<String, DaemonError> {
         self.ensure_daemon(session).map_err(|f| DaemonError::Broken(f.message))?;
         let result = Self::send_execute_command(session.daemon.as_mut().unwrap(), task_type, request_id, metadata, self.task_timeout);
@@ -298,6 +457,9 @@ impl BridgeState {
 
     fn execute_task(&self, task_type: &str, request_id: &str, metadata: &str, data: &[u8]) -> Result<Vec<u8>, Failure> {
         let mut session = self.lock_session();
+        if session.stream.is_some() {
+            return Err("A stream is open on this worker; close it before calling another task".into());
+        }
         if !session.shm_disabled {
             match self.execute_shm(&mut session, task_type, request_id, metadata, data) {
                 Ok(output) => return Ok(output),
@@ -342,25 +504,7 @@ impl BridgeState {
         metadata: &str,
         data: &[u8],
     ) -> Result<Vec<u8>, ShmFailure> {
-        self.reserve(session, true, data.len().max(1))?;
-        let wanted = session.wanted_output.max(INITIAL_SHM_SIZE);
-        if let Err(ShmFailure::TooLarge) = self.reserve(session, false, wanted) {
-            session.wanted_output = 0;
-            self.reserve(session, false, INITIAL_SHM_SIZE)?;
-        }
-
-        let input = session.input.as_mut().unwrap();
-        unsafe { input.shm.as_slice_mut()[..data.len()].copy_from_slice(data) };
-        let output = session.output.as_ref().unwrap();
-        let shm_metadata = format!(
-            "SHMEM {} {} {} {} {}",
-            input.name,
-            data.len(),
-            output.name,
-            output.capacity,
-            metadata
-        );
-        let output_capacity = output.capacity;
+        let (shm_metadata, output_capacity) = self.prepare_shm(session, metadata, data)?;
 
         let response = match self.send(session, task_type, request_id, &shm_metadata) {
             Ok(response) => response,
@@ -388,6 +532,28 @@ impl BridgeState {
             )));
         }
         Ok(unsafe { session.output.as_ref().unwrap().shm.as_slice()[..length].to_vec() })
+    }
+
+    fn prepare_shm(&self, session: &mut Session, metadata: &str, data: &[u8]) -> Result<(String, usize), ShmFailure> {
+        self.reserve(session, true, data.len().max(1))?;
+        let wanted = session.wanted_output.max(INITIAL_SHM_SIZE);
+        if let Err(ShmFailure::TooLarge) = self.reserve(session, false, wanted) {
+            session.wanted_output = 0;
+            self.reserve(session, false, INITIAL_SHM_SIZE)?;
+        }
+
+        let input = session.input.as_mut().unwrap();
+        unsafe { input.shm.as_slice_mut()[..data.len()].copy_from_slice(data) };
+        let output = session.output.as_ref().unwrap();
+        let shm_metadata = format!(
+            "SHMEM {} {} {} {} {}",
+            input.name,
+            data.len(),
+            output.name,
+            output.capacity,
+            metadata
+        );
+        Ok((shm_metadata, output.capacity))
     }
 
     fn execute_file(
@@ -438,7 +604,15 @@ fn shm_budget() -> usize {
 }
 
 fn parse_done(response: &str) -> Option<(usize, bool)> {
-    let mut parts = response.strip_prefix("DONE ")?.split_whitespace();
+    parse_length(response.strip_prefix("DONE ")?)
+}
+
+fn parse_chunk(response: &str) -> Option<(usize, bool)> {
+    parse_length(response.strip_prefix("CHUNK ")?)
+}
+
+fn parse_length(rest: &str) -> Option<(usize, bool)> {
+    let mut parts = rest.split_whitespace();
     let length = parts.next()?.parse().ok()?;
     Some((length, parts.next() == Some("FILE")))
 }
@@ -565,24 +739,71 @@ pub extern "system" fn Java_com_jpyrust_JPyRustBridge_executeTask<'local>(
         let request_id_str = get_rust_string(env, &request_id)?;
         let metadata_str = get_rust_string(env, &metadata)?;
 
-        let capacity = env
-            .get_direct_buffer_capacity(&input_data)
-            .map_err(|e| format!("Input must be a direct ByteBuffer ({})", e))?;
-        if input_length < 0 || input_length as usize > capacity {
-            return Err(format!("Invalid input length {} for buffer capacity {}", input_length, capacity).into());
-        }
-        let length = input_length as usize;
-        let data = if length == 0 {
-            &[][..]
-        } else {
-            let buffer_ptr = env.get_direct_buffer_address(&input_data).map_err(jerr)?;
-            unsafe { std::slice::from_raw_parts(buffer_ptr, length) }
-        };
-
+        let data = direct_buffer_slice(env, &input_data, input_length)?;
         let output = state.execute_task(&task_type_str, &request_id_str, &metadata_str, data)?;
         let array = env.byte_array_from_slice(&output).map_err(jerr)?;
         Ok(array.into_raw())
     })
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_jpyrust_JPyRustBridge_streamStart<'local>(
+    mut env: JNIEnv<'local>,
+    obj: JObject<'local>,
+    task_type: JString<'local>,
+    request_id: JString<'local>,
+    metadata: JString<'local>,
+    input_data: JByteBuffer<'local>,
+    input_length: jint,
+) {
+    run_jni(&mut env, (), |env| {
+        let state = get_state(env, &obj)?;
+        let task_type_str = get_rust_string(env, &task_type)?;
+        let request_id_str = get_rust_string(env, &request_id)?;
+        let metadata_str = get_rust_string(env, &metadata)?;
+        let data = direct_buffer_slice(env, &input_data, input_length)?;
+        state.stream_start(&task_type_str, &request_id_str, &metadata_str, data)
+    })
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_jpyrust_JPyRustBridge_streamNext<'local>(
+    mut env: JNIEnv<'local>,
+    obj: JObject<'local>,
+) -> jbyteArray {
+    run_jni(&mut env, std::ptr::null_mut(), |env| {
+        let state = get_state(env, &obj)?;
+        match state.stream_next()? {
+            Some(chunk) => Ok(env.byte_array_from_slice(&chunk).map_err(jerr)?.into_raw()),
+            None => Ok(std::ptr::null_mut()),
+        }
+    })
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_jpyrust_JPyRustBridge_streamCancel<'local>(
+    mut env: JNIEnv<'local>,
+    obj: JObject<'local>,
+) {
+    run_jni(&mut env, (), |env| {
+        let state = get_state(env, &obj)?;
+        state.stream_cancel()
+    })
+}
+
+fn direct_buffer_slice<'a>(env: &mut JNIEnv, input_data: &JByteBuffer, input_length: jint) -> Result<&'a [u8], Failure> {
+    let capacity = env
+        .get_direct_buffer_capacity(input_data)
+        .map_err(|e| format!("Input must be a direct ByteBuffer ({})", e))?;
+    if input_length < 0 || input_length as usize > capacity {
+        return Err(format!("Invalid input length {} for buffer capacity {}", input_length, capacity).into());
+    }
+    let length = input_length as usize;
+    if length == 0 {
+        return Ok(&[][..]);
+    }
+    let buffer_ptr = env.get_direct_buffer_address(input_data).map_err(jerr)?;
+    Ok(unsafe { std::slice::from_raw_parts(buffer_ptr, length) })
 }
 
 #[no_mangle]
@@ -843,6 +1064,14 @@ mod tests {
         assert_eq!(parse_done("DONE 2000000 FILE"), Some((2000000, true)));
         assert_eq!(parse_done("DONE x"), None);
         assert_eq!(parse_done("ERROR boom"), None);
+    }
+
+    #[test]
+    fn chunk_response_reports_length_and_file_fallback() {
+        assert_eq!(parse_chunk("CHUNK 7"), Some((7, false)));
+        assert_eq!(parse_chunk("CHUNK 3000000 FILE"), Some((3000000, true)));
+        assert_eq!(parse_chunk("DONE 7"), None);
+        assert_eq!(parse_chunk("END"), None);
     }
 
     #[cfg(unix)]

@@ -1,6 +1,7 @@
 # 변경 이력
 
 * **Unreleased**
+    * **기능:** 스트리밍. `yield`하는 작업을 `callStream(task, input, args)`로 `java.util.stream.Stream`처럼 읽습니다. 값은 만들어지는 대로 도착하고, 워커는 Java가 다음 값을 요청할 때까지 기다리며, 스트림을 닫으면 제너레이터가 멈춥니다(`finally` 블록 실행). 작업 타임아웃은 값 하나마다 적용됩니다. `JPyRustTemplate.callStream`은 스트림당 타이머 하나를 기록하고, `examples/spring-boot`는 제너레이터를 Server-Sent Events로 보냅니다. 제너레이터 작업을 `call`로 부르면 이제 명확한 `TaskFailedException`이 납니다.
     * **기능:** `NDArray`로 타입과 shape가 있는 배열을 Python과 주고받습니다. `bridge.call(task, NDArray.of(floats, 32, 128), args)`는 작업에 `numpy.ndarray`를 넘기고, 작업이 만든 배열을 돌려받습니다. 전송 형식이 NumPy `.npy`라 JSON이나 원소별 인코딩이 없으며, float32, float64, int8/16/32/64, uint8, bool을 지원합니다. `numpy.ndarray`를 반환하는 작업은 이제 JSON 직렬화 오류 대신 `.npy` 바이트를 돌려줍니다.
     * **기능:** `pythonVersion("3.12")`로 내려받을 CPython을 고릅니다. 3.11(기본), 3.12, 3.13, 3.14 중 하나이며 Spring starter에서는 `jpyrust.python-version`입니다. 바꾸면 인스턴스의 venv를 다시 만듭니다. 기본 의존성은 3.11~3.12에서 `numpy` 1.26.4, 3.13 이상에서 2.3.5로 고정하고, 내장 extras는 3.11~3.12에서만 설치되며 그보다 새 버전에서는 바로 실패합니다.
     * **동작 변경:** Windows도 python.org의 임베디드 3.11.9와 pip wheel 대신 python-build-standalone의 CPython 3.11.18을 내려받아 macOS·Linux와 같은 방식으로 venv를 만듭니다. 기존 Windows 인스턴스 디렉터리는 다음 `initialize()` 때 한 번 다시 설치됩니다.

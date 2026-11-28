@@ -338,3 +338,98 @@ def test_array_tasks_through_daemon(tmp_path):
     finally:
         if proc.poll() is None:
             proc.kill()
+
+
+STREAM_MODULE = '''
+import os
+from jpyrust import task
+
+
+@task("COUNT")
+def count(data, args):
+    try:
+        for i in range(int(args)):
+            yield f"tick {i}"
+    finally:
+        open(os.path.join(os.path.dirname(__file__), "closed.txt"), "w").write("closed")
+
+
+@task("HALFWAY")
+def halfway(data, args):
+    yield "first"
+    raise RuntimeError("broke halfway")
+
+
+@task("PLAIN")
+def plain(data, args):
+    return data.upper()
+'''
+
+
+def read_line(proc):
+    return proc.stdout.readline().strip()
+
+
+def test_streaming_through_daemon(tmp_path):
+    module_path = tmp_path / "stream_modules"
+    module_path.mkdir()
+    (module_path / "stream_tasks.py").write_text(STREAM_MODULE, encoding="utf-8")
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    proc = start_daemon(work_dir, module_path)
+    try:
+        assert read_line(proc) == "READY"
+
+        write_input_file(work_dir, "s1", b"")
+        proc.stdin.write("STREAM COUNT s1 3\n")
+        proc.stdin.flush()
+        chunks = []
+        while True:
+            line = read_line(proc)
+            if line == "END":
+                break
+            assert line.startswith("CHUNK ")
+            chunks.append(read_output_file(work_dir, "s1"))
+            proc.stdin.write("NEXT\n")
+            proc.stdin.flush()
+        assert chunks == [b"tick 0", b"tick 1", b"tick 2"]
+
+        (module_path / "closed.txt").unlink()
+        write_input_file(work_dir, "s2", b"")
+        proc.stdin.write("STREAM COUNT s2 1000000\n")
+        proc.stdin.flush()
+        assert read_line(proc).startswith("CHUNK ")
+        proc.stdin.write("CANCEL\n")
+        proc.stdin.flush()
+        assert read_line(proc) == "END"
+        assert (module_path / "closed.txt").read_text() == "closed"
+
+        write_input_file(work_dir, "s3", b"")
+        proc.stdin.write("STREAM HALFWAY s3\n")
+        proc.stdin.flush()
+        assert read_line(proc).startswith("CHUNK ")
+        proc.stdin.write("NEXT\n")
+        proc.stdin.flush()
+        assert read_line(proc) == "ERROR RuntimeError: broke halfway"
+
+        write_input_file(work_dir, "s4", b"abc")
+        proc.stdin.write("STREAM PLAIN s4\n")
+        proc.stdin.flush()
+        assert read_line(proc) == "CHUNK 3"
+        assert read_output_file(work_dir, "s4") == b"ABC"
+        proc.stdin.write("NEXT\n")
+        proc.stdin.flush()
+        assert read_line(proc) == "END"
+
+        assert execute(proc, work_dir, "COUNT", "s5", b"", "2") == \
+            "ERROR TypeError: the task yields results; call it with callStream"
+        assert execute(proc, work_dir, "PLAIN", "s6", b"ok").startswith("DONE ")
+
+        write_input_file(work_dir, "s7", b"")
+        proc.stdin.write("STREAM STATUS s7 NONE\n")
+        proc.stdin.flush()
+        assert read_line(proc) == "ERROR Task STATUS cannot be streamed"
+        stop(proc)
+    finally:
+        if proc.poll() is None:
+            proc.kill()

@@ -48,6 +48,34 @@ try (JPyRustBridge bridge = new JPyRustBridge("orders")   // instance id: names 
 
 Task names are case-insensitive. Input and output have no fixed size limit: data goes through shared memory up to 256 MB (less on Linux if `/dev/shm` is small) and through files beyond that.
 
+## Streaming
+
+A task that `yield`s produces a stream. `callStream` returns a `java.util.stream.Stream` whose elements are the yielded values, delivered as the task produces them.
+
+```python
+@task("TOKENS")
+def tokens(prompt, args):
+    for token in model.generate(prompt.decode()):
+        yield token
+```
+
+```java
+try (Stream<String> tokens = bridge.callStream("TOKENS", "Once upon a time")) {
+    tokens.forEach(System.out::print);
+}
+```
+
+| Method | Elements |
+| --- | --- |
+| `Stream<byte[]> callStream(String task, byte[] input, String args)` | each yielded value, converted like a `call` result |
+| `Stream<String> callStream(String task, String input)` | UTF-8 text |
+
+* The worker produces the next value only after Java asks for it, so a slow consumer never builds up a backlog in memory. Each value may be any size; large ones go through a file.
+* A stream holds one worker until it ends or is closed. **Always close it** (try-with-resources): closing early tells Python to stop, which runs the generator's `finally` blocks. A stream read to the end returns its worker by itself.
+* `task-timeout` applies to each value, not to the whole stream. An exception raised in the generator surfaces from `hasNext()`/`next()` as `TaskFailedException`; a timeout or crash as `WorkerTimeoutException` / `WorkerCrashedException`.
+* Yielded values follow the `call` rules: `bytes`, `str`, `numpy.ndarray` (map with `NDArray::fromNpy`) or JSON. A task that returns instead of yielding gives a stream of one element. Calling a generator task with `call` throws `TaskFailedException`.
+* `JPyRustTemplate.callStream` records one `jpyrust.calls` timer per stream, when it is closed. In Spring MVC, return a `StreamingResponseBody` that writes each element as a Server-Sent Event (see `examples/spring-boot`).
+
 ## Arrays
 
 `NDArray` carries a typed, shaped array to and from a task without JSON or custom encoding. On the wire it is a standard NumPy `.npy` buffer, so the task receives a `numpy.ndarray` and can return one.

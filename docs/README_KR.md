@@ -190,7 +190,26 @@ def grayscale(image, args):
 
 전송 형식은 NumPy의 `.npy` 그대로라 원소 하나하나를 인코딩하지 않습니다. 지원하는 dtype 전체는 [API 문서의 Arrays](API.md#arrays)를 보세요.
 
-### 4. 사용법 (Java) — 내장 비전 작업
+### 4. 스트리밍
+
+Python 제너레이터가 Java `Stream`이 됩니다. 값은 만들어지는 대로 도착하고, 워커는 Java가 다음 값을 요청할 때까지 기다리며, 스트림을 닫으면 제너레이터도 멈춥니다.
+
+```python
+@task("TOKENS")
+def tokens(prompt, args):
+    for token in model.generate(prompt.decode()):
+        yield token
+```
+
+```java
+try (Stream<String> tokens = bridge.callStream("TOKENS", "Once upon a time")) {
+    tokens.forEach(System.out::print);
+}
+```
+
+[`examples/spring-boot`](../examples/spring-boot)는 제너레이터 출력을 Server-Sent Events로 브라우저에 보냅니다. 자세한 내용은 [API 문서의 Streaming](API.md#streaming)을 보세요.
+
+### 5. 사용법 (Java) — 내장 비전 작업
 
 **중요:** v1.3.0부터 `static` 메서드가 제거되었습니다. 반드시 `JPyRustBridge` 객체를 생성해야 합니다.
 
@@ -230,7 +249,7 @@ public class VisionService {
 }
 ```
 
-### 5. 사용법 (Java) — 내장 오디오 / Whisper
+### 6. 사용법 (Java) — 내장 오디오 / Whisper
 
 **신규:** JPyRust는 [OpenAI Whisper](https://github.com/openai/whisper)를 통한 오디오 전사도 지원합니다 — YOLO와 동일한 상시 대기 데몬 아키텍처를 그대로 재사용합니다.
 

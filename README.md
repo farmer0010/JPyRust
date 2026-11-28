@@ -191,7 +191,26 @@ def grayscale(image, args):
 
 The wire format is NumPy's own `.npy`, so nothing is encoded element by element. See [Arrays in the API reference](docs/API.md#arrays) for every dtype.
 
-### 4. Usage (Java) — Built-in Vision
+### 4. Streaming
+
+A Python generator becomes a Java `Stream`. Values arrive as they are produced, the worker waits for Java before producing the next one, and closing the stream stops the generator.
+
+```python
+@task("TOKENS")
+def tokens(prompt, args):
+    for token in model.generate(prompt.decode()):
+        yield token
+```
+
+```java
+try (Stream<String> tokens = bridge.callStream("TOKENS", "Once upon a time")) {
+    tokens.forEach(System.out::print);
+}
+```
+
+[`examples/spring-boot`](examples/spring-boot) streams a generator to the browser as Server-Sent Events. See [Streaming in the API reference](docs/API.md#streaming).
+
+### 5. Usage (Java) — Built-in Vision
 
 **Important:** As of v1.3.0, static methods are removed. You must instantiate `JPyRustBridge`.
 
@@ -231,7 +250,7 @@ public class VisionService {
 }
 ```
 
-### 5. Usage (Java) — Built-in Audio / Whisper
+### 6. Usage (Java) — Built-in Audio / Whisper
 
 **New:** JPyRust can also transcribe audio via [OpenAI Whisper](https://github.com/openai/whisper), reusing the same persistent-daemon architecture as YOLO.
 
