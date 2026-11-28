@@ -53,7 +53,7 @@ jobs:
             test: false
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
@@ -99,7 +99,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Use natives built by this run
       uses: actions/download-artifact@v4
@@ -128,7 +128,7 @@ jobs:
       JPYRUST_PROVISION_TEST: "true"
       JPYRUST_FULL_STACK_TEST: "true"
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Use natives built by this run
       uses: actions/download-artifact@v4
@@ -166,7 +166,7 @@ jobs:
     name: Python tests
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -184,7 +184,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Use natives built by this run
       uses: actions/download-artifact@v4
@@ -264,7 +264,7 @@ jobs:
         done
         ls -l release
 
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
       if: env.MAVEN_CENTRAL_USERNAME != ''
       with:
         path: source
