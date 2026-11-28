@@ -38,13 +38,13 @@ def test_file_protocol_round_trip(worker, tmp_path):
     assert metadata == ["TEXT"]
     assert out_info is None
 
-    written = worker.write_output_data("req1", b"result", None)
+    written = worker.write_output_data("req1", [b"result"], None)
     assert written == "6"
     assert read_output_file(tmp_path, "req1") == b"result"
 
 
 def test_output_larger_than_shared_memory_falls_back_to_file(worker, tmp_path):
-    assert worker.write_output_data("req2", b"x" * 11, ("unused_shm", 10)) == "11 FILE"
+    assert worker.write_output_data("req2", [b"x" * 5, b"x" * 6], ("unused_shm", 10)) == "11 FILE"
     assert read_output_file(tmp_path, "req2") == b"x" * 11
 
 
@@ -255,6 +255,85 @@ def test_vision_extra_registers_edge_detect(tmp_path):
         assert execute(proc, tmp_path, "YOLO", "r3", png.tobytes()).startswith("DONE ")
         detections = json.loads(read_output_file(tmp_path, "r3"))["detections"]
         assert detections == [{"bbox": [20.0, 40.0, 200.0, 400.0], "label": "bus", "score": 0.9}]
+        stop(proc)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+
+ARRAY_MODULE = '''
+import numpy
+from jpyrust import task
+
+
+@task("SCALE")
+def scale(data, args):
+    return data * float(args)
+
+
+@task("DESCRIBE")
+def describe(data, args):
+    return {"type": type(data).__name__, "dtype": str(data.dtype), "shape": list(data.shape)}
+'''
+
+
+@pytest.mark.parametrize("array", [
+    __import__("numpy").arange(6, dtype="float32").reshape(2, 3),
+    __import__("numpy").array([[1, 2], [3, 4]], dtype=">i4").T,
+    __import__("numpy").array(7.5),
+    __import__("numpy").zeros((0, 3), dtype="uint8"),
+    __import__("numpy").array([True, False]),
+])
+def test_arrays_round_trip_through_npy(worker, array):
+    import io
+    import numpy
+    encoded = b"".join(bytes(part) for part in worker.encode_array(array))
+    assert encoded.startswith(b"\x93NUMPY")
+    assert (10 + int.from_bytes(encoded[8:10], "little")) % 64 == 0
+    loaded = numpy.load(io.BytesIO(encoded))
+    numpy.testing.assert_array_equal(loaded, array)
+    decoded = worker.decode_input(encoded)
+    numpy.testing.assert_array_equal(decoded, array)
+    assert decoded.dtype.byteorder in "<|=" and decoded.shape == array.shape
+
+
+def test_npy_written_by_numpy_is_decoded_without_copy(worker):
+    import io
+    import numpy
+    stream = io.BytesIO()
+    numpy.save(stream, numpy.arange(4, dtype="float64"))
+    data = stream.getvalue()
+    decoded = worker.decode_input(data)
+    assert decoded.base is not None and not decoded.flags.writeable
+    numpy.testing.assert_array_equal(decoded, [0, 1, 2, 3])
+    assert worker.decode_input(b"plain bytes") == b"plain bytes"
+
+
+def test_object_arrays_are_rejected(worker):
+    import numpy
+    with pytest.raises(TypeError):
+        worker.encode_array(numpy.array([{"a": 1}], dtype=object))
+
+
+def test_array_tasks_through_daemon(tmp_path):
+    import io
+    import numpy
+    module_path = tmp_path / "array_modules"
+    module_path.mkdir()
+    (module_path / "array_tasks.py").write_text(ARRAY_MODULE, encoding="utf-8")
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    stream = io.BytesIO()
+    numpy.save(stream, numpy.arange(6, dtype="float32").reshape(3, 2))
+    proc = start_daemon(work_dir, module_path)
+    try:
+        assert proc.stdout.readline().strip() == "READY"
+        assert execute(proc, work_dir, "SCALE", "a1", stream.getvalue(), "2").startswith("DONE ")
+        result = numpy.load(io.BytesIO(read_output_file(work_dir, "a1")))
+        numpy.testing.assert_array_equal(result, numpy.arange(6, dtype="float32").reshape(3, 2) * 2)
+        assert result.dtype == numpy.float32
+        assert execute(proc, work_dir, "DESCRIBE", "a2", stream.getvalue()).startswith("DONE ")
+        assert json.loads(read_output_file(work_dir, "a2")) == {"type": "ndarray", "dtype": "float32", "shape": [3, 2]}
         stop(proc)
     finally:
         if proc.poll() is None:

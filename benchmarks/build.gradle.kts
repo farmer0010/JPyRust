@@ -25,4 +25,5 @@ jmh {
     timeOnIteration.set("2s")
     resultFormat.set("JSON")
     resultsFile.set(layout.buildDirectory.file("results/jmh/results.json"))
+    providers.gradleProperty("jmhIncludes").orNull?.let { includes.set(listOf(it)) }
 }

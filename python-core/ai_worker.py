@@ -9,6 +9,7 @@ import platform
 import importlib.util
 import glob
 import json
+import math
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import jpyrust
@@ -88,20 +89,51 @@ def load_module_file(module_name, module_file):
         sys.modules.pop(module_name, None)
         print(f"[JPyRust-Worker] Failed to load {module_file}: {e}", file=sys.stderr, flush=True)
 
-def to_output_bytes(result):
+NPY_MAGIC = b"\x93NUMPY"
+
+def decode_input(data):
+    if not data.startswith(NPY_MAGIC):
+        return data
+    import numpy
+    from numpy.lib import format as npy
+    stream = io.BytesIO(data)
+    version = npy.read_magic(stream)
+    read_header = npy.read_array_header_1_0 if version == (1, 0) else npy.read_array_header_2_0
+    shape, fortran_order, dtype = read_header(stream)
+    array = numpy.frombuffer(data, dtype=dtype, count=math.prod(shape), offset=stream.tell())
+    return array.reshape(shape, order="F" if fortran_order else "C")
+
+def encode_array(array):
+    import numpy
+    from numpy.lib import format as npy
+    if array.dtype.hasobject:
+        raise TypeError("arrays of Python objects cannot be returned; convert to a numeric dtype")
+    if array.dtype.byteorder == ">":
+        array = array.astype(array.dtype.newbyteorder("<"))
+    if not array.flags.c_contiguous:
+        array = array.copy(order="C")
+    header = "{'descr': %r, 'fortran_order': False, 'shape': %r, }" % (npy.dtype_to_descr(array.dtype), array.shape)
+    header += " " * (63 - (10 + len(header)) % 64) + "\n"
+    return [NPY_MAGIC + b"\x01\x00" + struct.pack("<H", len(header)), header.encode("latin1"),
+            array.reshape(-1).view(numpy.uint8)]
+
+def to_output_parts(result):
     if result is None:
-        return b""
+        return [b""]
     if isinstance(result, (bytes, bytearray, memoryview)):
-        return bytes(result)
+        return [result]
     if isinstance(result, str):
-        return result.encode("utf-8")
-    return json.dumps(result, ensure_ascii=False).encode("utf-8")
+        return [result.encode("utf-8")]
+    numpy = sys.modules.get("numpy")
+    if numpy is not None and isinstance(result, numpy.ndarray):
+        return encode_array(result)
+    return [json.dumps(result, ensure_ascii=False).encode("utf-8")]
 
 def make_task_handler(fn):
     def handle(request_id, raw_metadata):
         try:
             data, metadata, out_info = parse_input_protocol(request_id, raw_metadata)
-            written = write_output_data(request_id, to_output_bytes(fn(data, " ".join(metadata))), out_info)
+            written = write_output_data(request_id, to_output_parts(fn(decode_input(data), " ".join(metadata))), out_info)
             return f"DONE {written}"
         except Exception as e:
             return "ERROR " + " ".join(f"{type(e).__name__}: {e}".split())
@@ -141,18 +173,25 @@ def parse_input_protocol(request_id, metadata):
         data = f.read(data_length)
     return data, metadata, None
 
-def write_output_data(request_id, data_bytes, out_shm_info):
-    if out_shm_info and len(data_bytes) <= out_shm_info[1]:
+def write_output_data(request_id, parts, out_shm_info):
+    views = [memoryview(part).cast("B") for part in parts]
+    size = sum(view.nbytes for view in views)
+    if out_shm_info and size <= out_shm_info[1]:
         try:
-            attach_shared_memory(out_shm_info[0]).buf[:len(data_bytes)] = data_bytes
-            return str(len(data_bytes))
+            buf = attach_shared_memory(out_shm_info[0]).buf
+            position = 0
+            for view in views:
+                buf[position:position + view.nbytes] = view
+                position += view.nbytes
+            return str(size)
         except Exception:
             pass
     output_path = os.path.join(WORK_DIR, f"output_{request_id}.dat")
     with open(output_path, "wb") as f:
-        f.write(struct.pack(">I", len(data_bytes)))
-        f.write(data_bytes)
-    return f"{len(data_bytes)} FILE" if out_shm_info else str(len(data_bytes))
+        f.write(struct.pack(">I", size))
+        for view in views:
+            f.write(view)
+    return f"{size} FILE" if out_shm_info else str(size)
 
 def handle_status(request_id, raw_metadata):
     try:
@@ -164,7 +203,7 @@ def handle_status(request_id, raw_metadata):
             "instance": args.instance_id
         }
         _, _, out_info = parse_input_protocol(request_id, raw_metadata)
-        written = write_output_data(request_id, json.dumps(status).encode('utf-8'), out_info)
+        written = write_output_data(request_id, [json.dumps(status).encode('utf-8')], out_info)
         return f"DONE {written}"
     except Exception as e:
         return f"ERROR {e}"

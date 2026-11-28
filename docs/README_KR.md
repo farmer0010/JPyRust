@@ -123,6 +123,8 @@ sequenceDiagram
 
 Java 스레드 4개에서 CPU를 쓰는 Python 호출: 워커 1개 초당 292건, `workers(4)` 930건, 스레드 방식 Python HTTP 서버 247~283건.
 
+float32 값 1,000,000개 배열을 numpy로 처리해 돌려받는 데 `NDArray`는 0.92ms, HTTP로 JSON을 주고받으면 170ms가 걸립니다(185배).
+
 > *Apple M5, OpenJDK 17, CPython 3.11.18, 2026-11-27. `./gradlew :benchmarks:jmh`로 직접 재현할 수 있습니다.*
 
 ---
@@ -170,7 +172,25 @@ byte[] raw = bridge.call("WORD_COUNT", bytes, "any args here");  // 바이트 �
 * `requirements(...)`는 내장 코어 `requirements.txt`를 대체하고, 켠 extra의 의존성은 그 뒤에 덧붙습니다. 설치 여부는 파일의 SHA-256으로 판단하므로, 파일을 바꾸면 다음 `initialize()`에서 `pip install`을 다시 실행합니다.
 * `workers(n)`이면 여러 스레드의 호출이 병렬로 돌고, `callAsync(...)`는 `CompletableFuture`를 돌려줍니다. 모든 옵션은 [API 문서](API.md)에 있습니다.
 
-### 3. 사용법 (Java) — 내장 비전 작업
+### 3. 배열 (NumPy)
+
+`NDArray`로 타입과 shape가 있는 배열을 JSON 없이 주고받습니다. 작업은 `numpy.ndarray`를 받고, 작업이 돌려준 배열은 타입 그대로 돌아옵니다.
+
+```java
+NDArray image = NDArray.ofUInt8(pixels, 480, 640, 3);
+NDArray gray = bridge.call("GRAYSCALE", image, "");      // float32, shape (480, 640)
+float[] values = gray.toFloatArray();
+```
+
+```python
+@task("GRAYSCALE")
+def grayscale(image, args):
+    return image.astype("float32").mean(axis=2) / 255
+```
+
+전송 형식은 NumPy의 `.npy` 그대로라 원소 하나하나를 인코딩하지 않습니다. 지원하는 dtype 전체는 [API 문서의 Arrays](API.md#arrays)를 보세요.
+
+### 4. 사용법 (Java) — 내장 비전 작업
 
 **중요:** v1.3.0부터 `static` 메서드가 제거되었습니다. 반드시 `JPyRustBridge` 객체를 생성해야 합니다.
 
@@ -210,7 +230,7 @@ public class VisionService {
 }
 ```
 
-### 4. 사용법 (Java) — 내장 오디오 / Whisper
+### 5. 사용법 (Java) — 내장 오디오 / Whisper
 
 **신규:** JPyRust는 [OpenAI Whisper](https://github.com/openai/whisper)를 통한 오디오 전사도 지원합니다 — YOLO와 동일한 상시 대기 데몬 아키텍처를 그대로 재사용합니다.
 

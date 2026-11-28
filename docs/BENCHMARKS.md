@@ -24,17 +24,28 @@ Apple M5 (10 cores), macOS, OpenJDK 17.0.18, CPython 3.11.18, JMH 1.36, 2026-11-
 
 The HTTP server has one process, so its threads share one GIL and four callers get about one core of Python. `workers(4)` runs four Python processes and scales 3.2× on four callers.
 
+**Arrays, one caller** (`ArrayBenchmark`, a float32 array multiplied by 2 in numpy and returned, measured from Java `float[]` to Java `float[]`, 2026-11-28)
+
+| Values | JPyRust `NDArray` p50 / p99 | Python HTTP server with JSON p50 / p99 | JPyRust is |
+| --- | --- | --- | --- |
+| 1,000 | 22.1 / 62.8 µs | 222.5 / 281.6 µs | 10× faster |
+| 100,000 | 106.4 / 144.6 µs | 16.0 / 18.4 ms | 151× faster |
+| 1,000,000 | 0.92 / 1.44 ms | 170.1 / 210.5 ms | 185× faster |
+
+JSON is how arrays usually cross an HTTP boundary between Java and Python: the Java side writes and parses text, the Python side runs `json.loads`, `numpy.array` and `tolist`. `NDArray` sends the raw little-endian values with a 64-byte `.npy` header, so the cost stays close to copying the bytes.
+
 ## What this does and does not show
 
 * **Shown:** for in-machine calls, shared memory plus a pipe beats HTTP over loopback at every payload size measured, and `workers(n)` turns CPU-bound Python into multi-core throughput without a separate service.
-* **Not shown:** a production HTTP stack with several worker processes (for example `uvicorn --workers 4`) also scales across cores; JPyRust's advantage there is latency and not having to deploy and operate the service. Jep and GraalPy were not measured.
+* **Not shown:** a binary HTTP encoding such as `.npy` bodies or Arrow would narrow the array gap to the transport difference measured above; JSON was chosen because it is the common default. A production HTTP stack with several worker processes (for example `uvicorn --workers 4`) also scales across cores; JPyRust's advantage there is latency and not having to deploy and operate the service. Jep and GraalPy were not measured.
 * JMH ran one fork, three 2-second warm-up iterations and five 2-second measurement iterations per case. Results vary with hardware; run them yourself.
 
 ## Running
 
 ```bash
 make native                     # build the native library for this machine
-./gradlew :benchmarks:jmh       # about 5 minutes; results in benchmarks/build/results/jmh/results.json
+./gradlew :benchmarks:jmh       # about 7 minutes; results in benchmarks/build/results/jmh/results.json
+./gradlew :benchmarks:jmh -PjmhIncludes=ArrayBenchmark   # one benchmark class
 ```
 
 The first run downloads Python into `~/.jpyrust/cache` and builds a venv in the system temp directory under `jpyrust-bench/`. The HTTP server is started from that venv's interpreter, so both sides use the same Python.

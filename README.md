@@ -123,6 +123,8 @@ Measured with JMH against a persistent Python HTTP server on the same machine ([
 
 CPU-bound Python from four Java threads: 292 calls/s with one worker, 930 with `workers(4)`, versus 247–283 for a threaded Python HTTP server.
 
+A float32 array of 1,000,000 values, scaled in numpy and returned: 0.92 ms as `NDArray`, 170 ms as JSON over HTTP (185×).
+
 > *Apple M5, OpenJDK 17, CPython 3.11.18, 2026-11-27. Run `./gradlew :benchmarks:jmh` on your own hardware.*
 
 ---
@@ -171,7 +173,25 @@ byte[] raw = bridge.call("WORD_COUNT", bytes, "any args here");  // raw bytes in
 * Calls from several threads run in parallel with `workers(n)`; `callAsync(...)` returns a `CompletableFuture`. See [the API reference](docs/API.md) for every option.
 
 
-### 3. Usage (Java) — Built-in Vision
+### 3. Arrays (NumPy)
+
+`NDArray` sends typed, shaped arrays both ways with no JSON in between. The task receives a `numpy.ndarray`, and an array it returns comes back typed.
+
+```java
+NDArray image = NDArray.ofUInt8(pixels, 480, 640, 3);
+NDArray gray = bridge.call("GRAYSCALE", image, "");      // float32, shape (480, 640)
+float[] values = gray.toFloatArray();
+```
+
+```python
+@task("GRAYSCALE")
+def grayscale(image, args):
+    return image.astype("float32").mean(axis=2) / 255
+```
+
+The wire format is NumPy's own `.npy`, so nothing is encoded element by element. See [Arrays in the API reference](docs/API.md#arrays) for every dtype.
+
+### 4. Usage (Java) — Built-in Vision
 
 **Important:** As of v1.3.0, static methods are removed. You must instantiate `JPyRustBridge`.
 
@@ -211,7 +231,7 @@ public class VisionService {
 }
 ```
 
-### 4. Usage (Java) — Built-in Audio / Whisper
+### 5. Usage (Java) — Built-in Audio / Whisper
 
 **New:** JPyRust can also transcribe audio via [OpenAI Whisper](https://github.com/openai/whisper), reusing the same persistent-daemon architecture as YOLO.
 

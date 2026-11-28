@@ -1,8 +1,8 @@
 package example;
 
 import com.jpyrust.JPyRustBridge;
+import com.jpyrust.NDArray;
 import com.jpyrust.TaskFailedException;
-import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.List;
@@ -18,11 +18,15 @@ public class Quickstart {
                 .workers(4)) {
             python.initialize();
 
-            ByteBuffer samples = ByteBuffer.allocate(8 * 10_000);
-            for (int i = 0; i < 10_000; i++) {
-                samples.putDouble(Math.sin(i) * 100);
+            double[] samples = new double[10_000];
+            for (int i = 0; i < samples.length; i++) {
+                samples[i] = Math.sin(i) * 100;
             }
-            System.out.println("STATS  " + new String(python.call("STATS", samples.array(), ""), StandardCharsets.UTF_8));
+            NDArray series = NDArray.of(samples);
+            System.out.println("STATS  " + new String(python.call("STATS", series.toNpy(), ""), StandardCharsets.UTF_8));
+
+            NDArray smoothed = python.call("SMOOTH", series, "50");
+            System.out.printf("SMOOTH %s, first value %.4f%n", smoothed, smoothed.toDoubleArray()[0]);
 
             long started = System.nanoTime();
             List<CompletableFuture<byte[]>> calls = IntStream.range(0, 8)

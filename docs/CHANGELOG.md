@@ -1,6 +1,7 @@
 # Changelog
 
 * **Unreleased**
+    * **Feature:** `NDArray` sends typed, shaped arrays to Python and back: `bridge.call(task, NDArray.of(floats, 32, 128), args)` hands the task a `numpy.ndarray` and returns the array it produces. The wire format is NumPy's `.npy`, so there is no JSON or per-element encoding; float32, float64, int8/16/32/64, uint8 and bool are supported. Any task returning a `numpy.ndarray` now produces `.npy` bytes instead of failing JSON serialization.
     * **Feature:** `pythonVersion("3.12")` chooses the downloaded CPython: 3.11 (default), 3.12, 3.13 or 3.14 (`jpyrust.python-version` in the Spring starter). Changing it rebuilds the instance's venv. The core requirements pin `numpy` 1.26.4 on 3.11–3.12 and 2.3.5 on 3.13+; the built-in extras stay on 3.11–3.12 and fail fast on newer versions.
     * **Behavior Change:** Windows downloads CPython 3.11.18 from python-build-standalone and builds a venv like macOS and Linux, instead of python.org's embeddable 3.11.9 plus a pip wheel. Existing Windows instance directories are reinstalled once on the next `initialize()`.
 

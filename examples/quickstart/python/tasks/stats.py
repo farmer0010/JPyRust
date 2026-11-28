@@ -6,9 +6,14 @@ from jpyrust import task
 
 
 @task("STATS")
-def stats(data, args):
-    values = np.frombuffer(data, dtype=">f8")
+def stats(values, args):
     return {"count": int(values.size), "mean": float(values.mean()), "p95": float(np.percentile(values, 95))}
+
+
+@task("SMOOTH")
+def smooth(values, args):
+    window = int(args)
+    return np.convolve(values, np.ones(window) / window, mode="valid")
 
 
 @task("PRIMES")
