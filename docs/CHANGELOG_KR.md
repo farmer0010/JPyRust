@@ -1,5 +1,9 @@
 # 변경 이력
 
+* **Unreleased**
+    * **수정:** `jpyrust-spring-boot-starter`가 Spring Boot 4에서도 `jpyRust` 헬스 체크와 `jpyrust.calls` 타이머를 등록합니다. Boot 4에서 health·metrics 클래스의 패키지가 바뀌어, 4.x에서는 호출은 되지만 둘 다 조용히 빠져 있었습니다. 이제 starter를 Boot 3.2.1과 4.2.0에서 모두 테스트합니다.
+    * **기타:** `windows-sys` 0.61, GitHub Actions 버전 업데이트, 쓰지 않는 `lazy_static` 의존성 제거. 예제와 `demo-web`은 Spring Boot 4.2를 씁니다.
+
 * **v2.0.0**
     * **1.x에서 올릴 때** — 먼저 읽어 주세요:
         * **내장 작업은 선택형 extras입니다.** `vision`(YOLO, 엣지 검출), `audio`(Whisper), `ml`(TextBlob 감정 분석, 회귀). 기본 설치는 `numpy`뿐이라 `extras("vision")` / `extras("audio")` / `extras("ml")`을 부르지 않으면 `ultralytics`(AGPL-3.0), `torch`, Whisper를 설치하지 않습니다. extra 없이 내장 작업을 부르면 `Task YOLO requires extras("vision")` 오류가 납니다.

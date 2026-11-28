@@ -17,7 +17,9 @@ import org.springframework.context.annotation.Configuration;
 
 @AutoConfiguration(afterName = {
         "org.springframework.boot.actuate.autoconfigure.metrics.CompositeMeterRegistryAutoConfiguration",
-        "org.springframework.boot.actuate.autoconfigure.metrics.export.simple.SimpleMetricsExportAutoConfiguration"})
+        "org.springframework.boot.actuate.autoconfigure.metrics.export.simple.SimpleMetricsExportAutoConfiguration",
+        "org.springframework.boot.micrometer.metrics.autoconfigure.CompositeMeterRegistryAutoConfiguration",
+        "org.springframework.boot.micrometer.metrics.autoconfigure.export.simple.SimpleMetricsExportAutoConfiguration"})
 @EnableConfigurationProperties(JPyRustProperties.class)
 public class JPyRustAutoConfiguration {
 
@@ -79,6 +81,24 @@ public class JPyRustAutoConfiguration {
                     return Health.up().withDetail("status", bridge.sendTask("STATUS", "NONE")).build();
                 } catch (RuntimeException e) {
                     return Health.down(e).build();
+                }
+            };
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(name = "org.springframework.boot.health.contributor.HealthIndicator")
+    static class Boot4HealthConfiguration {
+
+        @Bean
+        @ConditionalOnMissingBean(name = "jpyRustHealthIndicator")
+        org.springframework.boot.health.contributor.HealthIndicator jpyRustHealthIndicator(JPyRustBridge bridge) {
+            return () -> {
+                try {
+                    return org.springframework.boot.health.contributor.Health.up()
+                            .withDetail("status", bridge.sendTask("STATUS", "NONE")).build();
+                } catch (RuntimeException e) {
+                    return org.springframework.boot.health.contributor.Health.down(e).build();
                 }
             };
         }

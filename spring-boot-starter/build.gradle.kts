@@ -32,6 +32,7 @@ java {
 }
 
 val springBoot = "org.springframework.boot:spring-boot-dependencies:3.2.1"
+val springBoot4 = "org.springframework.boot:spring-boot-dependencies:4.2.0"
 
 dependencies {
     api(project(":java-api"))
@@ -40,6 +41,7 @@ dependencies {
     compileOnly("org.springframework.boot:spring-boot-actuator")
     compileOnly("io.micrometer:micrometer-core")
     compileOnly("com.fasterxml.jackson.core:jackson-annotations")
+    compileOnly("org.springframework.boot:spring-boot-health:4.2.0") { isTransitive = false }
 
     testImplementation(platform(springBoot))
     testImplementation("org.springframework.boot:spring-boot-starter-test")
@@ -49,4 +51,23 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+}
+
+testing {
+    suites {
+        register<JvmTestSuite>("boot4Test") {
+            useJUnitJupiter()
+            dependencies {
+                implementation(project())
+                implementation(platform(springBoot4))
+                implementation("org.springframework.boot:spring-boot-starter-test")
+                implementation("org.springframework.boot:spring-boot-health")
+                implementation("org.springframework.boot:spring-boot-micrometer-metrics")
+            }
+        }
+    }
+}
+
+tasks.named("check") {
+    dependsOn(testing.suites.named("boot4Test"))
 }

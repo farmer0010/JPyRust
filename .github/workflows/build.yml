@@ -118,7 +118,7 @@ jobs:
       shell: bash
       env:
         JPYRUST_PROVISION_TEST: "true"
-      run: ./gradlew :java-api:test :spring-boot-starter:test :demo-web:compileJava :examples:quickstart:compileJava :examples:spring-boot:compileJava :benchmarks:jmhClasses --console=plain
+      run: ./gradlew :java-api:test :spring-boot-starter:test :spring-boot-starter:boot4Test :demo-web:compileJava :examples:quickstart:compileJava :examples:spring-boot:compileJava :benchmarks:jmhClasses --console=plain
 
   windows-provision:
     name: Windows Python provisioning

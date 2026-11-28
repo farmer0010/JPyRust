@@ -1,5 +1,9 @@
 # Changelog
 
+* **Unreleased**
+    * **Fix:** `jpyrust-spring-boot-starter` registers the `jpyRust` health indicator and the `jpyrust.calls` timer on Spring Boot 4. Boot 4 moved the health and metrics classes to new packages, so on 4.x both were silently skipped while calls still worked. The starter is now tested on Boot 3.2.1 and 4.2.0.
+    * **Chore:** `windows-sys` 0.61, GitHub Actions updated, the unused `lazy_static` dependency removed. The examples and `demo-web` use Spring Boot 4.2.
+
 * **v2.0.0**
     * **Upgrading from 1.x** — read these first:
         * **Built-in tasks are opt-in extras.** `vision` (YOLO, edge detection), `audio` (Whisper) and `ml` (TextBlob sentiment, regression). The default install is only `numpy`, so `ultralytics` (AGPL-3.0), `torch` and Whisper are not installed unless you call `extras("vision")` / `extras("audio")` / `extras("ml")`. Calling a built-in task without its extra fails with `Task YOLO requires extras("vision")`.
