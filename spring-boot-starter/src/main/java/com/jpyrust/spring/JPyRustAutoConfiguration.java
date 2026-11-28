@@ -27,6 +27,7 @@ public class JPyRustAutoConfiguration {
     @ConditionalOnMissingBean
     public JPyRustBridge jpyRustBridge(JPyRustProperties properties) {
         JPyRustBridge bridge = new JPyRustBridge(properties.getInstanceId())
+                .pythonVersion(properties.getPythonVersion())
                 .workers(properties.getWorkers())
                 .timeouts(properties.getStartupTimeout(), properties.getTaskTimeout())
                 .model(properties.getModel(), properties.getConfidence())

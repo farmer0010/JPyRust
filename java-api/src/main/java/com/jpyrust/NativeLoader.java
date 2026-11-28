@@ -140,14 +140,6 @@ public class NativeLoader {
         }
     }
 
-    public static Path extractZip(Path zipFile, Path targetDir) {
-        try (InputStream is = Files.newInputStream(zipFile)) {
-            return unzip(is, targetDir);
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to extract ZIP file: " + zipFile, e);
-        }
-    }
-
     private static Path unzip(InputStream is, Path targetDir) throws IOException {
         if (!Files.exists(targetDir)) {
             Files.createDirectories(targetDir);

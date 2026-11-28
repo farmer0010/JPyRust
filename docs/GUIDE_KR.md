@@ -24,8 +24,7 @@ Java 애플리케이션에서 JPyRust를 설치하고, 초기화하고, 호출�
 | :--- | :--- |
 | Java | 17 이상 |
 | 플랫폼 | Windows, macOS, Linux (x86_64) |
-| Windows | 별도 준비 불필요 — 임베디드 Python이 번들되어 있고 자동으로 설치됩니다. |
-| macOS / Linux | 필요 없음. 첫 실행 때 체크섬 검증된 포터블 CPython 3.11.18(python-build-standalone)을 내려받아 격리된 venv를 만듭니다. Alpine(musl)은 `python(...)`이 필요합니다. |
+| Python | 필요 없음. Windows·macOS·Linux 모두 첫 실행 때 체크섬 검증된 포터블 CPython(python-build-standalone, 기본 3.11, `pythonVersion(...)`으로 3.12~3.14)을 내려받아 격리된 venv를 만듭니다. Alpine(musl)은 `python(...)`이 필요합니다. |
 | Docker | glibc 이미지에서 동작합니다. 첫 실행 때 컨테이너 안으로 Python을 내려받습니다. |
 
 ## 설치
@@ -152,8 +151,7 @@ cam2.initialize();
 
 ## 플랫폼별 참고사항
 
-- **Windows**: 포터블 임베디드 Python 배포판이 JAR 안에 번들되어 있고, 첫 `initialize()` 호출 때 풀립니다. 완전히 독립적으로 동작합니다.
-- **macOS / Linux**: python-build-standalone의 포터블 CPython 3.11.18을 내려받아 SHA-256을 검증하고 `~/.jpyrust/cache`에 캐시한 뒤, 그걸로 전용 venv(`~/.jpyrust/<instanceId>/venv`)를 만듭니다. 미리 설치할 것은 없습니다.
+- **Windows / macOS / Linux**: python-build-standalone의 포터블 CPython을 내려받아 SHA-256을 검증하고 `~/.jpyrust/cache`에 캐시한 뒤, 그걸로 전용 venv(`~/.jpyrust/<instanceId>/venv`)를 만듭니다. 미리 설치할 것은 없습니다. `pythonVersion("3.12")` 이상으로 더 새 인터프리터를 고를 수 있고, 바꾸면 venv를 다시 만듭니다.
 - **Docker**: glibc 기반 이미지에서 동작하며, 첫 `initialize()`가 컨테이너 안으로 Python을 내려받습니다. Docker 기본값(64MB)보다 큰 공유 메모리 버퍼가 필요하면 `--shm-size`를 늘리세요(더 큰 데이터는 파일로 넘어감).
 - 세 플랫폼 모두 대응하는 네이티브 라이브러리(`jpyrust.dll` / `jpyrust.dylib` / `jpyrust.so`)가 JAR 안에 들어있습니다 — 배포된 아티팩트를 쓸 때는 직접 빌드할 필요가 없습니다.
 

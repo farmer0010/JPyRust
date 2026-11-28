@@ -24,8 +24,7 @@ A hands-on guide to installing, initializing, and calling JPyRust from a Java ap
 | :--- | :--- |
 | Java | 17+ |
 | Platform | Windows, macOS, or Linux (x86_64) |
-| Windows | Nothing extra — the embedded Python is bundled and self-installs. |
-| macOS / Linux | Nothing. JPyRust downloads a checksum-verified portable CPython 3.11.18 (python-build-standalone) on first run and builds an isolated venv from it. Alpine (musl) needs `python(...)`. |
+| Python | Nothing. JPyRust downloads a checksum-verified portable CPython (python-build-standalone, 3.11 by default, 3.12–3.14 with `pythonVersion(...)`) on first run and builds an isolated venv from it, on Windows, macOS and Linux. Alpine (musl) needs `python(...)`. |
 | Docker | Works on glibc images; the first run downloads Python into the container. |
 
 ## Installation
@@ -152,8 +151,7 @@ Work directories default to `~/.jpyrust/<instanceId>`, so different `instanceId`
 
 ## Platform Notes
 
-- **Windows**: Ships a portable embedded Python distribution, bundled inside the JAR and extracted on first `initialize()`. Fully self-contained.
-- **macOS / Linux**: JPyRust downloads a portable CPython 3.11.18 from python-build-standalone, verifies its SHA-256, caches it in `~/.jpyrust/cache` and builds a private venv (`~/.jpyrust/<instanceId>/venv`) from it. Nothing has to be installed beforehand.
+- **Windows / macOS / Linux**: JPyRust downloads a portable CPython from python-build-standalone, verifies its SHA-256, caches it in `~/.jpyrust/cache` and builds a private venv (`~/.jpyrust/<instanceId>/venv`) from it. Nothing has to be installed beforehand. `pythonVersion("3.12")` and up pick a newer interpreter; changing it rebuilds the venv.
 - **Docker**: glibc-based images work; the first `initialize()` downloads Python into the container. Raise `--shm-size` for shared-memory buffers above Docker's 64 MB default (larger payloads fall back to files).
 - All three platforms ship a matching native library (`jpyrust.dll` / `jpyrust.dylib` / `jpyrust.so`) inside the JAR — you don't need to build anything yourself to use the published artifact.
 

@@ -34,13 +34,31 @@ public class PythonProvisioningTest {
         }
 
         boolean isWindows = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
-        Path python = isWindows ? workDir.resolve("python_dist/python.exe") : workDir.resolve("venv/bin/python3");
+        Path python = workDir.resolve(isWindows ? "venv/Scripts/python.exe" : "venv/bin/python3");
         assertTrue(Files.exists(python), python.toString());
 
         Process imports = new ProcessBuilder(python.toString(), "-c", "import torch, ultralytics, whisper, sklearn, textblob")
                 .inheritIO()
                 .start();
         assertEquals(0, imports.waitFor());
+    }
+
+    @Test
+    public void pythonVersionSwitchRebuildsTheVenv(@TempDir(cleanup = CleanupMode.NEVER) Path dir) throws Exception {
+        Path modules = Files.createDirectories(dir.resolve("tasks"));
+        Files.writeString(modules.resolve("version_tasks.py"),
+                "import sys\nimport numpy\nfrom jpyrust import task\n\n\n@task(\"VERSIONS\")\ndef versions(data, args):\n"
+                        + "    return f\"{sys.version_info.major}.{sys.version_info.minor} {numpy.__version__}\"\n");
+        Path work = dir.resolve("work");
+
+        for (String[] expected : new String[][] {{"3.12", "1.26.4"}, {"3.13", "2.3.5"}, {"3.14", "2.3.5"}}) {
+            try (JPyRustBridge bridge = new JPyRustBridge("provision_versions")
+                    .pythonVersion(expected[0])
+                    .moduleDir(modules)) {
+                bridge.initialize(work.toString());
+                assertEquals(expected[0] + " " + expected[1], bridge.call("VERSIONS", ""));
+            }
+        }
     }
 
     @Test

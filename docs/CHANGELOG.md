@@ -1,5 +1,9 @@
 # Changelog
 
+* **Unreleased**
+    * **Feature:** `pythonVersion("3.12")` chooses the downloaded CPython: 3.11 (default), 3.12, 3.13 or 3.14 (`jpyrust.python-version` in the Spring starter). Changing it rebuilds the instance's venv. The core requirements pin `numpy` 1.26.4 on 3.11–3.12 and 2.3.5 on 3.13+; the built-in extras stay on 3.11–3.12 and fail fast on newer versions.
+    * **Behavior Change:** Windows downloads CPython 3.11.18 from python-build-standalone and builds a venv like macOS and Linux, instead of python.org's embeddable 3.11.9 plus a pip wheel. Existing Windows instance directories are reinstalled once on the next `initialize()`.
+
 * **v2.0.1**
     * **Fix:** `jpyrust-spring-boot-starter` registers the `jpyRust` health indicator and the `jpyrust.calls` timer on Spring Boot 4. Boot 4 moved the health and metrics classes to new packages, so on 4.x both were silently skipped while calls still worked. The starter is now tested on Boot 3.2.1 and 4.2.0.
     * **Chore:** `windows-sys` 0.61, GitHub Actions updated, the unused `lazy_static` dependency removed. The examples and `demo-web` use Spring Boot 4.2.

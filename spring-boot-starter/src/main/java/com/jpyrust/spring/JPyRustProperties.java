@@ -15,6 +15,7 @@ public class JPyRustProperties {
     private List<Path> moduleDirs = new ArrayList<>();
     private List<String> extras = new ArrayList<>();
     private Path python;
+    private String pythonVersion = "3.11";
     private int workers = 1;
     private Duration startupTimeout = Duration.ofSeconds(600);
     private Duration taskTimeout = Duration.ofSeconds(300);
@@ -68,6 +69,14 @@ public class JPyRustProperties {
 
     public void setPython(Path python) {
         this.python = python;
+    }
+
+    public String getPythonVersion() {
+        return pythonVersion;
+    }
+
+    public void setPythonVersion(String pythonVersion) {
+        this.pythonVersion = pythonVersion;
     }
 
     public int getWorkers() {

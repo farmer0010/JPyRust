@@ -154,11 +154,9 @@ impl BridgeState {
 
     #[cfg(target_os = "windows")]
     fn find_python_executable(&self) -> String {
-        for candidate in ["python_dist/python.exe", "venv/Scripts/python.exe"] {
-            let path = format!("{}/{}", self.work_dir, candidate);
-            if std::path::Path::new(&path).exists() {
-                return path;
-            }
+        let path = format!("{}/venv/Scripts/python.exe", self.work_dir);
+        if std::path::Path::new(&path).exists() {
+            return path;
         }
         self.log_to_java("WARN", "[Rust] Embedded Python not found. Falling back to 'python'.");
         "python".to_string()
