@@ -140,7 +140,7 @@ dependencies {
 }
 ```
 
-JitPack keeps serving every tag (`com.github.farmer0010:JPyRust:<tag>` from `https://jitpack.io`); its JAR carries natives for Linux x86_64, macOS Apple Silicon and Windows x86_64 only.
+JitPack keeps serving every tag (`com.github.farmer0010.JPyRust:JPyRust:<tag>`, or `com.github.farmer0010.JPyRust:jpyrust-spring-boot-starter:<tag>`, from `https://jitpack.io`); its JAR carries natives for Linux x86_64, macOS Apple Silicon and Windows x86_64 only.
 
 ### 2. Usage (Java) — Your Own Python Code
 

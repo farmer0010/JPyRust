@@ -140,7 +140,7 @@ dependencies {
 }
 ```
 
-JitPack도 모든 태그를 계속 제공합니다(`https://jitpack.io`의 `com.github.farmer0010:JPyRust:<tag>`). 다만 JitPack JAR에는 Linux x86_64, macOS Apple Silicon, Windows x86_64용 네이티브만 들어 있습니다.
+JitPack도 모든 태그를 계속 제공합니다(`https://jitpack.io`의 `com.github.farmer0010.JPyRust:JPyRust:<tag>`, starter는 `com.github.farmer0010.JPyRust:jpyrust-spring-boot-starter:<tag>`). 다만 JitPack JAR에는 Linux x86_64, macOS Apple Silicon, Windows x86_64용 네이티브만 들어 있습니다.
 
 ### 2. 사용법 (Java) — 내 Python 코드 호출
 
