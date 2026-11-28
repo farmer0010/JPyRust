@@ -39,7 +39,7 @@ rust-check:
 	cd rust-bridge && cargo test
 
 java-test:
-	./gradlew :java-api:test :spring-boot-starter:test :demo-web:compileJava :examples:quickstart:compileJava :examples:spring-boot:compileJava :benchmarks:jmhClasses
+	./gradlew :java-api:test :spring-boot-starter:test :spring-boot-starter:boot4Test :demo-web:compileJava :examples:quickstart:compileJava :examples:spring-boot:compileJava :benchmarks:jmhClasses
 
 $(PYTHON):
 	uv venv --python 3.11 .venv

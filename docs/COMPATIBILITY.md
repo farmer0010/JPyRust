@@ -5,6 +5,7 @@
 | Component | Supported | Tested in CI |
 | --- | --- | --- |
 | JDK | 17 or newer | Temurin 17 |
+| Spring Boot (`jpyrust-spring-boot-starter`) | 3.2 or newer, including 4.x | 3.2.1 and 4.2.0, with a real Python worker |
 | Linux x86_64 (glibc) | Yes | `ubuntu-latest`, with a real Python worker |
 | Linux aarch64 (glibc) | Yes | `ubuntu-24.04-arm`, with a real Python worker |
 | macOS Apple Silicon | Yes | `macos-latest`, with a real Python worker |
