@@ -135,8 +135,8 @@ Java 스레드 4개에서 CPU를 쓰는 Python 호출: 워커 1개 초당 292건
 
 ```kotlin
 dependencies {
-    implementation("io.github.farmer0010:jpyrust:2.0.0")
-    // Spring Boot: implementation("io.github.farmer0010:jpyrust-spring-boot-starter:2.0.0")
+    implementation("io.github.farmer0010:jpyrust:2.0.1")
+    // Spring Boot: implementation("io.github.farmer0010:jpyrust-spring-boot-starter:2.0.1")
 }
 ```
 

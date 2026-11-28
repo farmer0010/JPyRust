@@ -1,6 +1,6 @@
 # Changelog
 
-* **Unreleased**
+* **v2.0.1**
     * **Fix:** `jpyrust-spring-boot-starter` registers the `jpyRust` health indicator and the `jpyrust.calls` timer on Spring Boot 4. Boot 4 moved the health and metrics classes to new packages, so on 4.x both were silently skipped while calls still worked. The starter is now tested on Boot 3.2.1 and 4.2.0.
     * **Chore:** `windows-sys` 0.61, GitHub Actions updated, the unused `lazy_static` dependency removed. The examples and `demo-web` use Spring Boot 4.2.
 

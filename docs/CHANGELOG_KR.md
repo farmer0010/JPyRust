@@ -1,6 +1,6 @@
 # 변경 이력
 
-* **Unreleased**
+* **v2.0.1**
     * **수정:** `jpyrust-spring-boot-starter`가 Spring Boot 4에서도 `jpyRust` 헬스 체크와 `jpyrust.calls` 타이머를 등록합니다. Boot 4에서 health·metrics 클래스의 패키지가 바뀌어, 4.x에서는 호출은 되지만 둘 다 조용히 빠져 있었습니다. 이제 starter를 Boot 3.2.1과 4.2.0에서 모두 테스트합니다.
     * **기타:** `windows-sys` 0.61, GitHub Actions 버전 업데이트, 쓰지 않는 `lazy_static` 의존성 제거. 예제와 `demo-web`은 Spring Boot 4.2를 씁니다.
 
