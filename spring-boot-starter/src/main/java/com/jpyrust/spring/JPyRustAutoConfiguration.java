@@ -33,6 +33,10 @@ public class JPyRustAutoConfiguration {
                 .model(properties.getModel(), properties.getConfidence())
                 .whisperModel(properties.getWhisperModel())
                 .extras(properties.getExtras().toArray(String[]::new));
+        bridge.torch(properties.getTorch());
+        if (!properties.getDevices().isEmpty()) {
+            bridge.devices(properties.getDevices().toArray(String[]::new));
+        }
         if (properties.getRequirements() != null) {
             bridge.requirements(properties.getRequirements());
         }

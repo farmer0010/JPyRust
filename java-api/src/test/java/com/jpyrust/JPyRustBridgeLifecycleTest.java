@@ -1,6 +1,7 @@
 package com.jpyrust;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -12,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Duration;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -108,5 +110,30 @@ public class JPyRustBridgeLifecycleTest {
         assertInstanceOf(IllegalStateException.class, error.getCause());
         assertTrue(error.getCause().getMessage().contains("pythonVersion(\"3.13\")"), error.getCause().getMessage());
         assertFalse(Files.exists(dir.resolve("venv")));
+    }
+
+    @Test
+    public void devicesSetTheWorkerCountAndAreValidated() {
+        JPyRustBridge bridge = new JPyRustBridge("lifecycle_test").devices("cuda:0", "CUDA:1", "cpu");
+        assertEquals(List.of("cuda:0", "cuda:1", "cpu"), bridge.devices());
+        assertThrows(IllegalArgumentException.class, () -> bridge.devices("gpu0"));
+        assertThrows(IllegalArgumentException.class, () -> bridge.devices(new String[0]));
+        bridge.workers(2);
+        assertEquals(List.of(), bridge.devices());
+        assertThrows(IllegalArgumentException.class, () -> bridge.torch("cuda12"));
+        assertEquals("auto", bridge.torch("AUTO").torchBuild());
+    }
+
+    @Test
+    public void systemPropertiesOverrideTheBuilder(@TempDir Path dir) {
+        System.setProperty("jpyrust.python-version", "3.10");
+        try {
+            JPyRustBridge bridge = new JPyRustBridge("lifecycle_test").pythonVersion("3.12");
+            JPyRustException error = assertThrows(JPyRustException.class, () -> bridge.initialize(dir.toString()));
+            assertInstanceOf(IllegalArgumentException.class, error.getCause());
+            assertTrue(error.getCause().getMessage().contains("3.10"), error.getCause().getMessage());
+        } finally {
+            System.clearProperty("jpyrust.python-version");
+        }
     }
 }

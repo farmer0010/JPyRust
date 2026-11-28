@@ -277,6 +277,24 @@ public class SpeechService {
 
 > Audio input is expected as a WAV container (16kHz, mono, 16-bit PCM). `confidence` is an approximation derived from Whisper's per-segment `avg_logprob`, not a calibrated probability.
 
+### 7. GPUs and per-environment versions
+
+Tasks use the GPU through their own libraries; `jpyrust.config["device"]` is `cuda`, `mps` or `cpu`. Three settings make the same code fit each machine:
+
+```java
+new JPyRustBridge("detector")
+        .devices("cuda:0", "cuda:1")   // one worker per GPU; each task sees its GPU as cuda:0
+        .torch("auto")                 // torch build matching the NVIDIA driver, cpu without a GPU
+        .extras("vision");
+```
+
+```bash
+java -jar jpyrust-2.2.0.jar doctor                       # what this machine has and what to use
+java -Djpyrust.torch=cpu -jar app.jar                    # override at start, no code change
+```
+
+A CUDA out-of-memory error throws `GpuOutOfMemoryException` and restarts that worker so the memory is released. `STATUS` and the Actuator health check report the GPU name and memory. See [Choosing versions per environment](docs/API.md#choosing-versions-per-environment) and [Command line](docs/API.md#command-line). GPU code paths are not covered by CI, which has no GPU runners.
+
 ---
 
 ## 🛠️ Configuration & Troubleshooting
